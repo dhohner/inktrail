@@ -9,6 +9,7 @@ go run ./cmd/inktrail                # unstaged changes
 go run ./cmd/inktrail -staged        # staged changes
 go run ./cmd/inktrail <commit>       # one commit
 go run ./cmd/inktrail <base> <head>  # commit range
+go run ./cmd/inktrail -chains        # call chains for changed code
 ```
 
 Examples:
@@ -32,6 +33,16 @@ Example output:
 ```text
 internal/server/handler.go:42:return handleRequest(ctx, req)
 internal/server/handler.go:43:return nil
+```
+
+Call-chain output:
+
+```sh
+go run ./cmd/inktrail -chains
+```
+
+```text
+controller.ControllerA.Handle -> service.ServiceA.Do -> service.ServiceB.Do -> repository.RepositoryB.Get
 ```
 
 Current scope: only target-side added/modified lines. Deleted lines and unchanged context are ignored.
