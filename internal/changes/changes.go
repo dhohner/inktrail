@@ -36,13 +36,10 @@ func Detect(opts Options) ([]Line, error) {
 		args = append(args, "--ignore-all-space", "--ignore-blank-lines")
 	}
 
-	if opts.Staged {
-		args = append(args, "--staged")
-	}
-
 	switch len(opts.Commits) {
 	case 0:
-		// default: unstaged changes, or staged if opts.Staged
+		// default: staged changes only; unstaged changes are intentionally ignored
+		args = append(args, "--staged")
 	case 1:
 		args = append(args, opts.Commits[0]+"^", opts.Commits[0])
 	case 2:

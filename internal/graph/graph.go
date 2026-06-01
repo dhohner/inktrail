@@ -19,14 +19,21 @@ type Function struct {
 	EndLine   int
 }
 
+type CallSite struct {
+	Path   string
+	LineNo int
+	Code   string
+}
+
 type Graph struct {
 	Functions map[string]Function
 	Calls     map[string]map[string]bool
 	Callers   map[string]map[string]bool
+	CallSites map[string]map[string]CallSite
 }
 
 func Build(root string) (*Graph, error) {
-	g := &Graph{Functions: map[string]Function{}, Calls: map[string]map[string]bool{}, Callers: map[string]map[string]bool{}}
+	g := &Graph{Functions: map[string]Function{}, Calls: map[string]map[string]bool{}, Callers: map[string]map[string]bool{}, CallSites: map[string]map[string]CallSite{}}
 	fset := token.NewFileSet()
 
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -44,7 +51,11 @@ func Build(root string) (*Graph, error) {
 			return nil
 		}
 
-		file, err := parser.ParseFile(fset, path, nil, 0)
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		file, err := parser.ParseFile(fset, path, source, 0)
 		if err != nil {
 			return err
 		}
@@ -84,7 +95,11 @@ func Build(root string) (*Graph, error) {
 			return nil
 		}
 
-		file, err := parser.ParseFile(fset, path, nil, 0)
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		file, err := parser.ParseFile(fset, path, source, 0)
 		if err != nil {
 			return err
 		}
@@ -106,7 +121,8 @@ func Build(root string) (*Graph, error) {
 				}
 				for candidate := range g.Functions {
 					if candidate == pkg+"."+to || strings.HasSuffix(candidate, "."+to) {
-						g.addEdge(from, candidate)
+						pos := fset.Position(call.Pos())
+						g.addEdge(from, candidate, CallSite{Path: clean(root, path), LineNo: pos.Line, Code: sourceLine(source, pos.Line)})
 					}
 				}
 				return true
@@ -184,7 +200,16 @@ func (g *Graph) forwardChains(root string) [][]string {
 	return chains
 }
 
-func (g *Graph) addEdge(from, to string) {
+func (g *Graph) CallSite(from, to string) (CallSite, bool) {
+	calls, ok := g.CallSites[from]
+	if !ok {
+		return CallSite{}, false
+	}
+	call, ok := calls[to]
+	return call, ok
+}
+
+func (g *Graph) addEdge(from, to string, call CallSite) {
 	if from == to {
 		return
 	}
@@ -194,8 +219,12 @@ func (g *Graph) addEdge(from, to string) {
 	if g.Callers[to] == nil {
 		g.Callers[to] = map[string]bool{}
 	}
+	if g.CallSites[from] == nil {
+		g.CallSites[from] = map[string]CallSite{}
+	}
 	g.Calls[from][to] = true
 	g.Callers[to][from] = true
+	g.CallSites[from][to] = call
 }
 
 func functionName(pkg string, fn *ast.FuncDecl) string {
@@ -252,6 +281,14 @@ func typeName(expr ast.Expr) string {
 		return typeName(x.X)
 	}
 	return ""
+}
+
+func sourceLine(source []byte, lineNo int) string {
+	lines := strings.Split(string(source), "\n")
+	if lineNo < 1 || lineNo > len(lines) {
+		return ""
+	}
+	return strings.TrimSpace(lines[lineNo-1])
 }
 
 func clean(root, path string) string {
