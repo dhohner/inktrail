@@ -3,13 +3,10 @@ package graph
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
-
-	"inktrail/internal/changes"
 )
 
-func TestChainsForChanged(t *testing.T) {
+func TestBuildCallGraph(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "app.go", `package app
 
@@ -29,10 +26,14 @@ func (r RepositoryB) Get() {}
 		t.Fatal(err)
 	}
 
-	got := g.ChainsForChanged([]changes.Line{{Path: "app.go", LineNo: 10, Content: "func (s ServiceB) Do() { RepositoryB{}.Get() }"}})
-	want := [][]string{{"app.ControllerA.Handle", "app.ServiceA.Do", "app.ServiceB.Do", "app.RepositoryB.Get"}}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got=%#v want=%#v", got, want)
+	if !g.Calls["app.ControllerA.Handle"]["app.ServiceA.Do"] {
+		t.Fatalf("missing ControllerA.Handle -> ServiceA.Do edge")
+	}
+	if !g.Calls["app.ServiceA.Do"]["app.ServiceB.Do"] {
+		t.Fatalf("missing ServiceA.Do -> ServiceB.Do edge")
+	}
+	if !g.Calls["app.ServiceB.Do"]["app.RepositoryB.Get"] {
+		t.Fatalf("missing ServiceB.Do -> RepositoryB.Get edge")
 	}
 }
 

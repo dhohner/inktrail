@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"inktrail/internal/changes"
+	"inktrail/internal/diff"
 	"inktrail/internal/graph"
 )
 
@@ -15,9 +15,10 @@ type LineRange struct {
 	End   int `json:"end"`
 }
 
-type ChangedLine struct {
-	Path string `json:"path"`
-	Line int    `json:"line"`
+type ChangedLineRange struct {
+	Path  string `json:"path"`
+	Start int    `json:"start"`
+	End   int    `json:"end"`
 }
 
 type CallSite struct {
@@ -31,38 +32,64 @@ type OutgoingCall struct {
 }
 
 type Node struct {
-	ID           string         `json:"id"`
-	Path         string         `json:"path"`
-	Name         string         `json:"name"`
-	Kind         string         `json:"kind"`
-	StartLine    int            `json:"start_line"`
-	EndLine      int            `json:"end_line"`
-	Calls        []OutgoingCall `json:"calls,omitempty"`
-	Changed      bool           `json:"changed"`
-	ChangedLines []ChangedLine  `json:"changed_lines,omitempty"`
-	Boundary     *string        `json:"boundary"`
-	Package      string         `json:"package"`
-	File         string         `json:"file"`
-	LineRange    LineRange      `json:"lineRange"`
+	ID           string             `json:"id"`
+	Path         string             `json:"path"`
+	Name         string             `json:"name"`
+	Kind         string             `json:"kind"`
+	StartLine    int                `json:"start_line"`
+	EndLine      int                `json:"end_line"`
+	Calls        []OutgoingCall     `json:"calls,omitempty"`
+	Changed      bool               `json:"changed"`
+	ChangedLines []ChangedLineRange `json:"changed_lines,omitempty"`
+	Boundary     *string            `json:"boundary"`
+	Package      string             `json:"package"`
+	File         string             `json:"file"`
+	LineRange    LineRange          `json:"lineRange"`
+}
+
+type RemovedCall struct {
+	From     string   `json:"from"`
+	To       string   `json:"to"`
+	CallSite CallSite `json:"call_site"`
+}
+
+type Summary struct {
+	Files          int `json:"files"`
+	TestFiles      int `json:"test_files"`
+	ChangedSymbols int `json:"changed_symbols"`
+	DeletedSymbols int `json:"deleted_symbols"`
+	RemovedCalls   int `json:"removed_calls"`
+	EntryPoints    int `json:"entry_points"`
+	Nodes          int `json:"nodes"`
 }
 
 type Report struct {
-	ChangedSymbols []string `json:"changed_symbols"`
-	EntryPoints    []string `json:"entry_points"`
-	Nodes          []Node   `json:"nodes"`
+	Summary        Summary           `json:"summary"`
+	Files          []diff.FileChange `json:"files"`
+	ChangedSymbols []string          `json:"changed_symbols"`
+	DeletedSymbols []string          `json:"deleted_symbols"`
+	RemovedCalls   []RemovedCall     `json:"removed_calls"`
+	EntryPoints    []string          `json:"entry_points"`
+	Nodes          []Node            `json:"nodes"`
 }
 
-func Build(g *graph.Graph, changed []changes.Line) Report {
-	changedByFunc := map[string][]ChangedLine{}
-	changedLines := make([]ChangedLine, 0, len(changed))
+func Build(g *graph.Graph, result diff.Result) Report {
+	return BuildWithBase(g, nil, result)
+}
+
+func BuildWithBase(g, old *graph.Graph, result diff.Result) Report {
+	changed := result.Lines
+	changedByFunc := map[string][]ChangedLineRange{}
+	changedLineNosByFunc := map[string][]int{}
 	for _, line := range changed {
-		changedLine := ChangedLine{Path: line.Path, Line: line.LineNo}
-		changedLines = append(changedLines, changedLine)
 		for name, fn := range g.Functions {
 			if fn.Path == line.Path && line.LineNo >= fn.StartLine && line.LineNo <= fn.EndLine {
-				changedByFunc[name] = append(changedByFunc[name], changedLine)
+				changedLineNosByFunc[name] = append(changedLineNosByFunc[name], line.LineNo)
 			}
 		}
+	}
+	for name, lineNos := range changedLineNosByFunc {
+		changedByFunc[name] = compactLineRanges(g.Functions[name].Path, lineNos)
 	}
 
 	chains := chainsToChanged(g, changedByFunc)
@@ -101,14 +128,29 @@ func Build(g *graph.Graph, changed []changes.Line) Report {
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
 
 	changedSymbols := keysAsSymbolIDs(g, changedByFunc)
+	entryPointIDs := sortedKeys(entryPoints)
+	deletedSymbols := deletedSymbols(g, old)
+	removedCalls := removedCalls(g, old)
 	return Report{
+		Summary: Summary{
+			Files:          len(result.Files),
+			TestFiles:      countTestFiles(result.Files),
+			ChangedSymbols: len(changedSymbols),
+			DeletedSymbols: len(deletedSymbols),
+			RemovedCalls:   len(removedCalls),
+			EntryPoints:    len(entryPointIDs),
+			Nodes:          len(nodes),
+		},
+		Files:          result.Files,
 		ChangedSymbols: changedSymbols,
-		EntryPoints:    sortedKeys(entryPoints),
+		DeletedSymbols: deletedSymbols,
+		RemovedCalls:   removedCalls,
+		EntryPoints:    entryPointIDs,
 		Nodes:          nodes,
 	}
 }
 
-func chainsToChanged(g *graph.Graph, changedByFunc map[string][]ChangedLine) [][]string {
+func chainsToChanged(g *graph.Graph, changedByFunc map[string][]ChangedLineRange) [][]string {
 	seenChains := map[string]bool{}
 	var chains [][]string
 	for changedName := range changedByFunc {
@@ -175,13 +217,113 @@ func relevantCalls(g *graph.Graph, name string, relevant map[string]bool) []Outg
 	return out
 }
 
-func keysAsSymbolIDs(g *graph.Graph, values map[string][]ChangedLine) []string {
+func deletedSymbols(current, old *graph.Graph) []string {
+	if old == nil {
+		return nil
+	}
+	var ids []string
+	currentIDs := map[string]bool{}
+	for _, fn := range current.Functions {
+		currentIDs[symbolID(fn)] = true
+	}
+	for _, fn := range old.Functions {
+		id := symbolID(fn)
+		if !currentIDs[id] {
+			ids = append(ids, id)
+		}
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+func removedCalls(current, old *graph.Graph) []RemovedCall {
+	if old == nil {
+		return nil
+	}
+	currentEdges := map[string]bool{}
+	for from, calls := range current.Calls {
+		fromFn, ok := current.Functions[from]
+		if !ok {
+			continue
+		}
+		for to := range calls {
+			toFn, ok := current.Functions[to]
+			if ok {
+				currentEdges[symbolID(fromFn)+"->"+symbolID(toFn)] = true
+			}
+		}
+	}
+
+	var out []RemovedCall
+	for from, calls := range old.Calls {
+		fromFn, ok := old.Functions[from]
+		if !ok {
+			continue
+		}
+		for to := range calls {
+			toFn, ok := old.Functions[to]
+			if !ok {
+				continue
+			}
+			fromID := symbolID(fromFn)
+			toID := symbolID(toFn)
+			if currentEdges[fromID+"->"+toID] {
+				continue
+			}
+			call, _ := old.CallSite(from, to)
+			out = append(out, RemovedCall{From: fromID, To: toID, CallSite: CallSite{Path: call.Path, Line: call.LineNo}})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].From == out[j].From {
+			return out[i].To < out[j].To
+		}
+		return out[i].From < out[j].From
+	})
+	return out
+}
+
+func compactLineRanges(path string, lines []int) []ChangedLineRange {
+	if len(lines) == 0 {
+		return nil
+	}
+	sort.Ints(lines)
+	var ranges []ChangedLineRange
+	start := lines[0]
+	end := lines[0]
+	for _, line := range lines[1:] {
+		if line == end {
+			continue
+		}
+		if line == end+1 {
+			end = line
+			continue
+		}
+		ranges = append(ranges, ChangedLineRange{Path: path, Start: start, End: end})
+		start = line
+		end = line
+	}
+	ranges = append(ranges, ChangedLineRange{Path: path, Start: start, End: end})
+	return ranges
+}
+
+func keysAsSymbolIDs(g *graph.Graph, values map[string][]ChangedLineRange) []string {
 	ids := make([]string, 0, len(values))
 	for name := range values {
 		ids = append(ids, symbolID(g.Functions[name]))
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+func countTestFiles(files []diff.FileChange) int {
+	count := 0
+	for _, file := range files {
+		if file.Test {
+			count++
+		}
+	}
+	return count
 }
 
 func sortedKeys(values map[string]bool) []string {

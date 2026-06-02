@@ -1,4 +1,4 @@
-package changes
+package diff
 
 import "testing"
 
@@ -31,6 +31,41 @@ index 111..222 100644
 	}
 	for i := range want {
 		if got[i] != want[i] {
+			t.Fatalf("got[%d]=%#v want=%#v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestParseFilesIncludesStatusHunksAndTestFiles(t *testing.T) {
+	diff := []byte(`diff --git a/app.go b/app.go
+--- a/app.go
++++ b/app.go
+@@ -10 +10,2 @@ func main() {
+-old()
++new()
++next()
+diff --git a/main_test.go b/main_test.go
+new file mode 100644
+--- /dev/null
++++ b/main_test.go
+@@ -0,0 +1 @@
++test()
+`)
+
+	got, err := ParseFiles(diff)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	want := []FileChange{
+		{Status: "modified", OldPath: "app.go", Path: "app.go", Hunks: []Hunk{{OldStart: 10, OldLines: 1, NewStart: 10, NewLines: 2}}},
+		{Status: "added", OldPath: "main_test.go", Path: "main_test.go", Test: true, Hunks: []Hunk{{OldStart: 0, OldLines: 0, NewStart: 1, NewLines: 1}}},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got=%#v want=%#v", got, want)
+	}
+	for i := range want {
+		if got[i].Status != want[i].Status || got[i].OldPath != want[i].OldPath || got[i].Path != want[i].Path || got[i].Test != want[i].Test || len(got[i].Hunks) != len(want[i].Hunks) || got[i].Hunks[0] != want[i].Hunks[0] {
 			t.Fatalf("got[%d]=%#v want=%#v", i, got[i], want[i])
 		}
 	}

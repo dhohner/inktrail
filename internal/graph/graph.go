@@ -1,15 +1,15 @@
 package graph
 
 import (
+	"bytes"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
-
-	"inktrail/internal/changes"
 )
 
 type Function struct {
@@ -32,10 +32,13 @@ type Graph struct {
 	CallSites map[string]map[string]CallSite
 }
 
-func Build(root string) (*Graph, error) {
-	g := &Graph{Functions: map[string]Function{}, Calls: map[string]map[string]bool{}, Callers: map[string]map[string]bool{}, CallSites: map[string]map[string]CallSite{}}
-	fset := token.NewFileSet()
+type sourceFile struct {
+	Path   string
+	Source []byte
+}
 
+func Build(root string) (*Graph, error) {
+	var files []sourceFile
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -50,16 +53,50 @@ func Build(root string) (*Graph, error) {
 		if !strings.HasSuffix(path, ".go") || isTestPath(path) {
 			return nil
 		}
-
 		source, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		file, err := parser.ParseFile(fset, path, source, 0)
-		if err != nil {
-			return err
-		}
+		files = append(files, sourceFile{Path: clean(root, path), Source: source})
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return buildFromSources(files)
+}
 
+func BuildGit(ref string) (*Graph, error) {
+	out, err := exec.Command("git", "ls-tree", "-r", "--name-only", ref).Output()
+	if err != nil {
+		return nil, gitErr("git ls-tree failed", err)
+	}
+
+	var files []sourceFile
+	for _, path := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if path == "" || !strings.HasSuffix(path, ".go") || isTestPath(path) {
+			continue
+		}
+		source, err := exec.Command("git", "show", ref+":"+path).Output()
+		if err != nil {
+			return nil, gitErr(fmt.Sprintf("git show failed for %s", path), err)
+		}
+		files = append(files, sourceFile{Path: path, Source: source})
+	}
+	return buildFromSources(files)
+}
+
+func buildFromSources(files []sourceFile) (*Graph, error) {
+	g := &Graph{Functions: map[string]Function{}, Calls: map[string]map[string]bool{}, Callers: map[string]map[string]bool{}, CallSites: map[string]map[string]CallSite{}}
+	fset := token.NewFileSet()
+	parsed := map[string]*ast.File{}
+
+	for _, sf := range files {
+		file, err := parser.ParseFile(fset, sf.Path, sf.Source, 0)
+		if err != nil {
+			return nil, err
+		}
+		parsed[sf.Path] = file
 		pkg := file.Name.Name
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -67,42 +104,12 @@ func Build(root string) (*Graph, error) {
 				continue
 			}
 			name := functionName(pkg, fn)
-			g.Functions[name] = Function{
-				Name:      name,
-				Path:      clean(root, path),
-				StartLine: fset.Position(fn.Pos()).Line,
-				EndLine:   fset.Position(fn.End()).Line,
-			}
+			g.Functions[name] = Function{Name: name, Path: sf.Path, StartLine: fset.Position(fn.Pos()).Line, EndLine: fset.Position(fn.End()).Line}
 		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
 	}
 
-	err = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			name := d.Name()
-			if name == ".git" || name == "vendor" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".go") || isTestPath(path) {
-			return nil
-		}
-
-		source, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		file, err := parser.ParseFile(fset, path, source, 0)
-		if err != nil {
-			return err
-		}
+	for _, sf := range files {
+		file := parsed[sf.Path]
 		pkg := file.Name.Name
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -122,82 +129,14 @@ func Build(root string) (*Graph, error) {
 				for candidate := range g.Functions {
 					if candidate == pkg+"."+to || strings.HasSuffix(candidate, "."+to) {
 						pos := fset.Position(call.Pos())
-						g.addEdge(from, candidate, CallSite{Path: clean(root, path), LineNo: pos.Line, Code: sourceLine(source, pos.Line)})
+						g.addEdge(from, candidate, CallSite{Path: sf.Path, LineNo: pos.Line, Code: sourceLine(sf.Source, pos.Line)})
 					}
 				}
 				return true
 			})
 		}
-		return nil
-	})
-	return g, err
-}
-
-func (g *Graph) ChainsForChanged(lines []changes.Line) [][]string {
-	changed := map[string]bool{}
-	for _, line := range lines {
-		for name, fn := range g.Functions {
-			if fn.Path == line.Path && line.LineNo >= fn.StartLine && line.LineNo <= fn.EndLine {
-				changed[name] = true
-			}
-		}
 	}
-
-	var chains [][]string
-	for name := range changed {
-		for _, root := range g.rootsTo(name) {
-			chains = append(chains, g.forwardChains(root)...)
-		}
-	}
-	return uniqueChains(chains)
-}
-
-func (g *Graph) rootsTo(name string) []string {
-	seen := map[string]bool{}
-	var roots []string
-	var walk func(string)
-	walk = func(n string) {
-		if seen[n] {
-			return
-		}
-		seen[n] = true
-		if len(g.Callers[n]) == 0 {
-			roots = append(roots, n)
-			return
-		}
-		for caller := range g.Callers[n] {
-			walk(caller)
-		}
-	}
-	walk(name)
-	sort.Strings(roots)
-	return roots
-}
-
-func (g *Graph) forwardChains(root string) [][]string {
-	var chains [][]string
-	var walk func(string, []string, map[string]bool)
-	walk = func(n string, path []string, seen map[string]bool) {
-		if seen[n] {
-			chains = append(chains, append(path, n))
-			return
-		}
-		seen[n] = true
-		path = append(path, n)
-		if len(g.Calls[n]) == 0 {
-			chains = append(chains, path)
-			return
-		}
-		for callee := range g.Calls[n] {
-			nextSeen := map[string]bool{}
-			for k, v := range seen {
-				nextSeen[k] = v
-			}
-			walk(callee, append([]string{}, path...), nextSeen)
-		}
-	}
-	walk(root, nil, map[string]bool{})
-	return chains
+	return g, nil
 }
 
 func (g *Graph) CallSite(from, to string) (CallSite, bool) {
@@ -310,16 +249,9 @@ func isTestPath(path string) bool {
 	return strings.HasSuffix(path, "_test.go")
 }
 
-func uniqueChains(chains [][]string) [][]string {
-	seen := map[string]bool{}
-	var out [][]string
-	for _, chain := range chains {
-		key := strings.Join(chain, " -> ")
-		if !seen[key] {
-			seen[key] = true
-			out = append(out, chain)
-		}
+func gitErr(prefix string, err error) error {
+	if exit, ok := err.(*exec.ExitError); ok {
+		return fmt.Errorf("%s: %s", prefix, bytes.TrimSpace(exit.Stderr))
 	}
-	sort.Slice(out, func(i, j int) bool { return strings.Join(out[i], " -> ") < strings.Join(out[j], " -> ") })
-	return out
+	return fmt.Errorf("%s: %w", prefix, err)
 }

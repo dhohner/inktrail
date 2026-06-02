@@ -1,56 +1,72 @@
 # inktrail
 
-Detect changed code lines from git diffs.
+AI-agent JSON report for Go code touched by git diffs.
+
+`inktrail` helps autonomous coding agents review changes by producing a content-free impact report: changed files, hunk ranges, changed symbols, deleted symbols, removed call edges, entry points, and relevant call graph nodes.
 
 ## Usage
 
 ```sh
-go run ./cmd/inktrail                # staged changes
-go run ./cmd/inktrail <commit>       # one commit
-go run ./cmd/inktrail <base> <head>  # commit range
-go run ./cmd/inktrail -chains        # call chains for staged/commit changes
-go run ./cmd/inktrail -report        # AI-agent JSON report for staged/commit changes
+go run ./cmd/inktrail                # report for staged diff vs HEAD
+go run ./cmd/inktrail <commit>       # report for one commit vs <commit>^
+go run ./cmd/inktrail <base> <head>  # report for commit range
 ```
 
-Examples:
+Output is JSON. Changed source content is intentionally not included.
 
-```sh
-# Show changed lines already staged for commit
-go run ./cmd/inktrail
+## Report fields
 
-# Show changed lines introduced by one commit
-go run ./cmd/inktrail a1b2c3d
+- `summary`: counts for files, test files, changed symbols, deleted symbols, removed calls, entry points, and nodes
+- `files`: changed file metadata
+  - `status`: `added`, `modified`, `deleted`, or `renamed`
+  - `old_path`: source path for modified/renamed/deleted files when available
+  - `path`: current path
+  - `test`: whether file is test-only scope
+  - `hunks`: old/new line ranges without content
+- `changed_symbols`: current symbols containing added/modified production-code lines
+- `deleted_symbols`: symbols present in the base AST but absent from current AST
+- `removed_calls`: call edges present in the base AST but absent from current AST
+- `entry_points`: root callers that reach changed symbols
+- `nodes`: relevant current call graph nodes with call sites and changed line ranges
 
-# Show changed lines between two refs
-go run ./cmd/inktrail main HEAD
-```
-
-Example output:
-
-```text
-internal/server/handler.go:42:return handleRequest(ctx, req)
-internal/server/handler.go:43:return nil
-```
-
-Call-chain output:
-
-```sh
-go run ./cmd/inktrail -chains
-```
-
-```text
-controller.ControllerA.Handle -> service.ServiceA.Do -> service.ServiceB.Do -> repository.RepositoryB.Get
-```
-
-AI-agent report output:
-
-```sh
-go run ./cmd/inktrail -report
-```
+## Example
 
 ```json
 {
+  "summary": {
+    "files": 2,
+    "test_files": 1,
+    "changed_symbols": 1,
+    "deleted_symbols": 1,
+    "removed_calls": 1,
+    "entry_points": 1,
+    "nodes": 2
+  },
+  "files": [
+    {
+      "status": "modified",
+      "old_path": "service/b.go",
+      "path": "service/b.go",
+      "test": false,
+      "hunks": [
+        {
+          "old_start": 16,
+          "old_lines": 4,
+          "new_start": 16,
+          "new_lines": 5
+        }
+      ]
+    }
+  ],
   "changed_symbols": ["service/b.go::service.ServiceB.Do"],
+  "deleted_symbols": ["repository/old.go::repository.RepositoryOld.Get"],
+  "removed_calls": [
+    {
+      "from": "service/b.go::service.ServiceB.Do",
+      "to": "repository/old.go::repository.RepositoryOld.Get",
+      "call_site": { "path": "service/b.go", "line": 18 }
+    }
+  ],
   "entry_points": ["controller/a.go::controller.ControllerA.Handle"],
   "nodes": [
     {
@@ -63,11 +79,11 @@ go run ./cmd/inktrail -report
       "calls": [
         {
           "to": "repository/b.go::repository.RepositoryB.Get",
-          "call_site": { "path": "service/b.go", "line": 18 }
+          "call_site": { "path": "service/b.go", "line": 19 }
         }
       ],
       "changed": true,
-      "changed_lines": [{ "path": "service/b.go", "line": 18 }],
+      "changed_lines": [{ "path": "service/b.go", "start": 18, "end": 20 }],
       "boundary": null,
       "package": "service",
       "file": "service/b.go",
@@ -77,15 +93,26 @@ go run ./cmd/inktrail -report
 }
 ```
 
-Current scope: only target-side added/modified lines. Deleted lines and unchanged context are ignored.
+## Scope
 
-Formatting-only changes are skipped by default:
+Diff scope:
 
-- whitespace-only changes
-- blank-line changes
-- line-break-only formatting that `git diff --ignore-all-space --ignore-blank-lines` can ignore
+- target-side added/modified Go lines for `changed_symbols`
+- file metadata and hunk ranges for production and test files
+- deleted files and deleted-only hunks included in `files`
+- renamed files included as `status: "renamed"`
 
-Test-only code is skipped by default:
+AST scope:
 
-- `*_test.go`
-- files under `test/`, `tests/`, or `testdata/`
+- current AST builds `changed_symbols`, `entry_points`, and `nodes`
+- base AST builds `deleted_symbols` and `removed_calls`
+- base ref selection:
+  - staged diff: `HEAD`
+  - one commit: `<commit>^`
+  - range: `<base>`
+
+Skipped for symbol/call analysis:
+
+- test-only code: `*_test.go`, `test/`, `tests/`, `testdata/`
+- formatting-only diffs by default (`--ignore-all-space`, `--ignore-blank-lines`)
+- blank added lines
