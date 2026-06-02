@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"inktrail/internal/source"
 )
 
 // Line identifies one changed line in a file.
@@ -244,11 +246,5 @@ func cleanDiffPath(path string) string {
 }
 
 func isTestPath(path string) bool {
-	parts := strings.Split(path, "/")
-	for _, part := range parts {
-		if part == "test" || part == "tests" || part == "testdata" {
-			return true
-		}
-	}
-	return strings.HasSuffix(path, "_test.go")
+	return source.IsGoTestPath(path)
 }

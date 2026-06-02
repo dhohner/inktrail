@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"inktrail/internal/diff"
@@ -11,28 +12,34 @@ import (
 )
 
 func main() {
-	flag.Parse()
+	if err := run(os.Args[1:], os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
 
-	result, err := diff.Inspect(diff.Options{Commits: flag.Args()})
+func run(args []string, out io.Writer) error {
+	flags := flag.NewFlagSet("inktrail", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	commits := flags.Args()
+
+	result, err := diff.Inspect(diff.Options{Commits: commits})
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return err
 	}
 
-	g, err := graph.Build(".")
+	current, err := graph.Build(".")
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return err
 	}
-	old, err := graph.BuildGit(baseRef(flag.Args()))
+	base, err := graph.BuildGit(baseRef(commits))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
+		return err
 	}
-	if err := report.WriteJSON(os.Stdout, report.BuildWithBase(g, old, result)); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	return report.WriteJSON(out, report.BuildWithBase(current, base, result))
 }
 
 func baseRef(args []string) string {

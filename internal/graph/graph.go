@@ -10,6 +10,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"inktrail/internal/source"
+)
+
+const (
+	gitDir    = ".git"
+	vendorDir = "vendor"
 )
 
 type Function struct {
@@ -30,6 +37,8 @@ type Graph struct {
 	Calls     map[string]map[string]bool
 	Callers   map[string]map[string]bool
 	CallSites map[string]map[string]CallSite
+
+	functionsByCallName map[string][]string
 }
 
 type sourceFile struct {
@@ -37,29 +46,14 @@ type sourceFile struct {
 	Source []byte
 }
 
+type parsedSource struct {
+	Path   string
+	Source []byte
+	File   *ast.File
+}
+
 func Build(root string) (*Graph, error) {
-	var files []sourceFile
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			name := d.Name()
-			if name == ".git" || name == "vendor" {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".go") || isTestPath(path) {
-			return nil
-		}
-		source, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		files = append(files, sourceFile{Path: clean(root, path), Source: source})
-		return nil
-	})
+	files, err := loadFiles(root)
 	if err != nil {
 		return nil, err
 	}
@@ -67,6 +61,39 @@ func Build(root string) (*Graph, error) {
 }
 
 func BuildGit(ref string) (*Graph, error) {
+	files, err := loadGitFiles(ref)
+	if err != nil {
+		return nil, err
+	}
+	return buildFromSources(files)
+}
+
+func loadFiles(root string) ([]sourceFile, error) {
+	var files []sourceFile
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if shouldSkipDir(d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !isProductionGoFile(path) {
+			return nil
+		}
+		sourceBytes, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		files = append(files, sourceFile{Path: clean(root, path), Source: sourceBytes})
+		return nil
+	})
+	return files, err
+}
+
+func loadGitFiles(ref string) ([]sourceFile, error) {
 	out, err := exec.Command("git", "ls-tree", "-r", "--name-only", ref).Output()
 	if err != nil {
 		return nil, gitErr("git ls-tree failed", err)
@@ -74,69 +101,113 @@ func BuildGit(ref string) (*Graph, error) {
 
 	var files []sourceFile
 	for _, path := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if path == "" || !strings.HasSuffix(path, ".go") || isTestPath(path) {
+		if path == "" || !isProductionGoFile(path) {
 			continue
 		}
-		source, err := exec.Command("git", "show", ref+":"+path).Output()
+		sourceBytes, err := exec.Command("git", "show", ref+":"+path).Output()
 		if err != nil {
 			return nil, gitErr(fmt.Sprintf("git show failed for %s", path), err)
 		}
-		files = append(files, sourceFile{Path: path, Source: source})
+		files = append(files, sourceFile{Path: path, Source: sourceBytes})
 	}
-	return buildFromSources(files)
+	return files, nil
 }
 
 func buildFromSources(files []sourceFile) (*Graph, error) {
-	g := &Graph{Functions: map[string]Function{}, Calls: map[string]map[string]bool{}, Callers: map[string]map[string]bool{}, CallSites: map[string]map[string]CallSite{}}
+	g := newGraph()
 	fset := token.NewFileSet()
-	parsed := map[string]*ast.File{}
+	parsed, err := parseSources(fset, files)
+	if err != nil {
+		return nil, err
+	}
 
+	for _, ps := range parsed {
+		g.addFunctions(fset, ps)
+	}
+	for _, ps := range parsed {
+		g.addCalls(fset, ps)
+	}
+	return g, nil
+}
+
+func newGraph() *Graph {
+	return &Graph{
+		Functions:           map[string]Function{},
+		Calls:               map[string]map[string]bool{},
+		Callers:             map[string]map[string]bool{},
+		CallSites:           map[string]map[string]CallSite{},
+		functionsByCallName: map[string][]string{},
+	}
+}
+
+func parseSources(fset *token.FileSet, files []sourceFile) ([]parsedSource, error) {
+	parsed := make([]parsedSource, 0, len(files))
 	for _, sf := range files {
 		file, err := parser.ParseFile(fset, sf.Path, sf.Source, 0)
 		if err != nil {
 			return nil, err
 		}
-		parsed[sf.Path] = file
-		pkg := file.Name.Name
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-			name := functionName(pkg, fn)
-			g.Functions[name] = Function{Name: name, Path: sf.Path, StartLine: fset.Position(fn.Pos()).Line, EndLine: fset.Position(fn.End()).Line}
-		}
+		parsed = append(parsed, parsedSource{Path: sf.Path, Source: sf.Source, File: file})
 	}
+	return parsed, nil
+}
 
-	for _, sf := range files {
-		file := parsed[sf.Path]
-		pkg := file.Name.Name
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-			from := functionName(pkg, fn)
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				to := callName(call.Fun)
-				if to == "" {
-					return true
-				}
-				for candidate := range g.Functions {
-					if candidate == pkg+"."+to || strings.HasSuffix(candidate, "."+to) {
-						pos := fset.Position(call.Pos())
-						g.addEdge(from, candidate, CallSite{Path: sf.Path, LineNo: pos.Line, Code: sourceLine(sf.Source, pos.Line)})
-					}
-				}
-				return true
-			})
+func (g *Graph) addFunctions(fset *token.FileSet, ps parsedSource) {
+	pkg := ps.File.Name.Name
+	for _, decl := range ps.File.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
 		}
+		name := functionName(pkg, fn)
+		g.Functions[name] = Function{Name: name, Path: ps.Path, StartLine: fset.Position(fn.Pos()).Line, EndLine: fset.Position(fn.End()).Line}
+		g.indexFunction(name)
 	}
-	return g, nil
+}
+
+func (g *Graph) addCalls(fset *token.FileSet, ps parsedSource) {
+	pkg := ps.File.Name.Name
+	for _, decl := range ps.File.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		from := functionName(pkg, fn)
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			to := callName(call.Fun)
+			if to == "" {
+				return true
+			}
+			pos := fset.Position(call.Pos())
+			site := CallSite{Path: ps.Path, LineNo: pos.Line, Code: sourceLine(ps.Source, pos.Line)}
+			for _, candidate := range g.resolveCalls(pkg, to) {
+				g.addEdge(from, candidate, site)
+			}
+			return true
+		})
+	}
+}
+
+func (g *Graph) indexFunction(name string) {
+	seen := map[string]bool{}
+	for _, key := range []string{shortCallableName(name), lastNameSegment(name)} {
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		g.functionsByCallName[key] = append(g.functionsByCallName[key], name)
+	}
+}
+
+func (g *Graph) resolveCalls(pkg, to string) []string {
+	if fn, ok := g.Functions[pkg+"."+to]; ok {
+		return []string{fn.Name}
+	}
+	return g.functionsByCallName[to]
 }
 
 func (g *Graph) CallSite(from, to string) (CallSite, bool) {
@@ -238,15 +309,25 @@ func clean(root, path string) string {
 	return filepath.ToSlash(rel)
 }
 
-func isTestPath(path string) bool {
-	path = filepath.ToSlash(path)
-	parts := strings.Split(path, "/")
-	for _, part := range parts {
-		if part == "test" || part == "tests" || part == "testdata" {
-			return true
-		}
+func shortCallableName(name string) string {
+	parts := strings.Split(name, ".")
+	if len(parts) >= 2 {
+		return strings.Join(parts[1:], ".")
 	}
-	return strings.HasSuffix(path, "_test.go")
+	return name
+}
+
+func lastNameSegment(name string) string {
+	parts := strings.Split(name, ".")
+	return parts[len(parts)-1]
+}
+
+func shouldSkipDir(name string) bool {
+	return name == gitDir || name == vendorDir
+}
+
+func isProductionGoFile(path string) bool {
+	return strings.HasSuffix(path, ".go") && !source.IsGoTestPath(path)
 }
 
 func gitErr(prefix string, err error) error {

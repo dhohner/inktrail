@@ -78,54 +78,9 @@ func Build(g *graph.Graph, result diff.Result) Report {
 }
 
 func BuildWithBase(g, old *graph.Graph, result diff.Result) Report {
-	changed := result.Lines
-	changedByFunc := map[string][]ChangedLineRange{}
-	changedLineNosByFunc := map[string][]int{}
-	for _, line := range changed {
-		for name, fn := range g.Functions {
-			if fn.Path == line.Path && line.LineNo >= fn.StartLine && line.LineNo <= fn.EndLine {
-				changedLineNosByFunc[name] = append(changedLineNosByFunc[name], line.LineNo)
-			}
-		}
-	}
-	for name, lineNos := range changedLineNosByFunc {
-		changedByFunc[name] = compactLineRanges(g.Functions[name].Path, lineNos)
-	}
-
-	chains := chainsToChanged(g, changedByFunc)
-	nodeNames := map[string]bool{}
-	entryPoints := map[string]bool{}
-	for _, chain := range chains {
-		if len(chain) == 0 {
-			continue
-		}
-		entryPoints[symbolID(g.Functions[chain[0]])] = true
-		for _, name := range chain {
-			nodeNames[name] = true
-		}
-	}
-
-	nodes := make([]Node, 0, len(nodeNames))
-	for name := range nodeNames {
-		fn := g.Functions[name]
-		changedLines := changedByFunc[name]
-		nodes = append(nodes, Node{
-			ID:           symbolID(fn),
-			Path:         fn.Path,
-			Name:         shortName(name),
-			Kind:         kind(name),
-			StartLine:    fn.StartLine,
-			EndLine:      fn.EndLine,
-			Calls:        relevantCalls(g, name, nodeNames),
-			Changed:      len(changedLines) > 0,
-			ChangedLines: changedLines,
-			Boundary:     nil,
-			Package:      packageName(name),
-			File:         fn.Path,
-			LineRange:    LineRange{Start: fn.StartLine, End: fn.EndLine},
-		})
-	}
-	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
+	changedByFunc := changedLineRangesByFunction(g, result.Lines)
+	nodeNames, entryPoints := impactedNodes(g, changedByFunc)
+	nodes := buildNodes(g, nodeNames, changedByFunc)
 
 	changedSymbols := keysAsSymbolIDs(g, changedByFunc)
 	entryPointIDs := sortedKeys(entryPoints)
@@ -148,6 +103,67 @@ func BuildWithBase(g, old *graph.Graph, result diff.Result) Report {
 		EntryPoints:    entryPointIDs,
 		Nodes:          nodes,
 	}
+}
+
+func changedLineRangesByFunction(g *graph.Graph, lines []diff.Line) map[string][]ChangedLineRange {
+	lineNosByFunction := map[string][]int{}
+	for _, line := range lines {
+		for name, fn := range g.Functions {
+			if containsLine(fn, line.Path, line.LineNo) {
+				lineNosByFunction[name] = append(lineNosByFunction[name], line.LineNo)
+			}
+		}
+	}
+
+	changedByFunc := map[string][]ChangedLineRange{}
+	for name, lineNos := range lineNosByFunction {
+		changedByFunc[name] = compactLineRanges(g.Functions[name].Path, lineNos)
+	}
+	return changedByFunc
+}
+
+func containsLine(fn graph.Function, path string, lineNo int) bool {
+	return fn.Path == path && lineNo >= fn.StartLine && lineNo <= fn.EndLine
+}
+
+func impactedNodes(g *graph.Graph, changedByFunc map[string][]ChangedLineRange) (map[string]bool, map[string]bool) {
+	nodeNames := map[string]bool{}
+	entryPoints := map[string]bool{}
+	for _, chain := range chainsToChanged(g, changedByFunc) {
+		if len(chain) == 0 {
+			continue
+		}
+		entryPoints[symbolID(g.Functions[chain[0]])] = true
+		for _, name := range chain {
+			nodeNames[name] = true
+		}
+	}
+	return nodeNames, entryPoints
+}
+
+func buildNodes(g *graph.Graph, nodeNames map[string]bool, changedByFunc map[string][]ChangedLineRange) []Node {
+	nodes := make([]Node, 0, len(nodeNames))
+	for name := range nodeNames {
+		fn := g.Functions[name]
+		changedLines := changedByFunc[name]
+		nodes = append(nodes, Node{
+			ID:           symbolID(fn),
+			Path:         fn.Path,
+			Name:         shortName(name),
+			Kind:         kind(name),
+			StartLine:    fn.StartLine,
+			EndLine:      fn.EndLine,
+			Calls:        relevantCalls(g, name, nodeNames),
+			Changed:      len(changedLines) > 0,
+			ChangedLines: changedLines,
+			Boundary:     nil,
+			Package:      packageName(name),
+			File:         fn.Path,
+			LineRange:    LineRange{Start: fn.StartLine, End: fn.EndLine},
+		})
+	}
+	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
+	return nodes
 }
 
 func chainsToChanged(g *graph.Graph, changedByFunc map[string][]ChangedLineRange) [][]string {

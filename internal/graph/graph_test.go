@@ -37,6 +37,30 @@ func (r RepositoryB) Get() {}
 	}
 }
 
+func TestBuildCallGraphResolvesVariableMethodCalls(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "app.go", `package app
+
+type Service struct{}
+
+func Handler() {
+	svc := Service{}
+	svc.Do()
+}
+
+func (s Service) Do() {}
+`)
+
+	g, err := Build(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !g.Calls["app.Handler"]["app.Service.Do"] {
+		t.Fatalf("missing Handler -> Service.Do edge")
+	}
+}
+
 func write(t *testing.T, dir, name, content string) {
 	t.Helper()
 	path := filepath.Join(dir, name)
