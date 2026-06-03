@@ -53,6 +53,9 @@ var modeOptions = []modeOption{
 var (
 	hasStagedChanges   = diff.HasStagedChanges
 	hasUnstagedChanges = diff.HasUnstagedChanges
+	inspectDiff        = diff.Inspect
+	buildGraph         = graph.Build
+	buildGitGraph      = graph.BuildGit
 
 	appStyle = lipgloss.NewStyle().
 			Margin(1, 2).
@@ -119,20 +122,47 @@ func analyze(commits []string, out io.Writer, fallbackToHead bool) error {
 	if err != nil {
 		return err
 	}
-	result, err := diff.Inspect(diff.Options{Commits: commits})
+	result, err := inspectDiff(diff.Options{Commits: commits})
 	if err != nil {
 		return err
+	}
+	if len(result.Files) == 0 {
+		return report.WriteJSONL(out, report.Report{})
 	}
 
-	current, err := graph.Build(".")
-	if err != nil {
-		return err
-	}
-	base, err := graph.BuildGit(baseRef(commits))
+	current, base, err := buildGraphs(baseRef(commits))
 	if err != nil {
 		return err
 	}
 	return report.WriteJSONL(out, report.BuildWithBase(current, base, result))
+}
+
+func buildGraphs(base string) (*graph.Graph, *graph.Graph, error) {
+	type graphResult struct {
+		graph *graph.Graph
+		err   error
+	}
+
+	currentCh := make(chan graphResult, 1)
+	baseCh := make(chan graphResult, 1)
+	go func() {
+		g, err := buildGraph(".")
+		currentCh <- graphResult{graph: g, err: err}
+	}()
+	go func() {
+		g, err := buildGitGraph(base)
+		baseCh <- graphResult{graph: g, err: err}
+	}()
+
+	current := <-currentCh
+	baseResult := <-baseCh
+	if current.err != nil {
+		return nil, nil, current.err
+	}
+	if baseResult.err != nil {
+		return nil, nil, baseResult.err
+	}
+	return current.graph, baseResult.graph, nil
 }
 
 func resolveCommits(commits []string, fallbackToHead bool) ([]string, error) {
