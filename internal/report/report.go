@@ -16,9 +16,8 @@ type LineRange struct {
 }
 
 type ChangedLineRange struct {
-	Path  string `json:"path"`
-	Start int    `json:"start"`
-	End   int    `json:"end"`
+	Start int `json:"start"`
+	End   int `json:"end"`
 }
 
 type CallSite struct {
@@ -41,10 +40,8 @@ type Node struct {
 	Calls        []OutgoingCall     `json:"calls,omitempty"`
 	Changed      bool               `json:"changed"`
 	ChangedLines []ChangedLineRange `json:"changed_lines,omitempty"`
-	Boundary     *string            `json:"boundary"`
+	Boundary     *string            `json:"boundary,omitempty"`
 	Package      string             `json:"package"`
-	File         string             `json:"file"`
-	LineRange    LineRange          `json:"lineRange"`
 }
 
 type RemovedCall struct {
@@ -158,8 +155,6 @@ func buildNodes(g *graph.Graph, nodeNames map[string]bool, changedByFunc map[str
 			ChangedLines: changedLines,
 			Boundary:     nil,
 			Package:      packageName(name),
-			File:         fn.Path,
-			LineRange:    LineRange{Start: fn.StartLine, End: fn.EndLine},
 		})
 	}
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
@@ -204,6 +199,65 @@ func WriteJSON(w io.Writer, r Report) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(r)
+}
+
+func WriteJSONL(w io.Writer, r Report) error {
+	enc := json.NewEncoder(w)
+	if err := enc.Encode(struct {
+		Type string `json:"type"`
+		Summary
+	}{Type: "summary", Summary: r.Summary}); err != nil {
+		return err
+	}
+	for _, file := range r.Files {
+		if err := enc.Encode(struct {
+			Type string `json:"type"`
+			diff.FileChange
+		}{Type: "file", FileChange: file}); err != nil {
+			return err
+		}
+	}
+	for _, id := range r.ChangedSymbols {
+		if err := enc.Encode(struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		}{Type: "changed_symbol", ID: id}); err != nil {
+			return err
+		}
+	}
+	for _, id := range r.DeletedSymbols {
+		if err := enc.Encode(struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		}{Type: "deleted_symbol", ID: id}); err != nil {
+			return err
+		}
+	}
+	for _, call := range r.RemovedCalls {
+		if err := enc.Encode(struct {
+			Type string `json:"type"`
+			RemovedCall
+		}{Type: "removed_call", RemovedCall: call}); err != nil {
+			return err
+		}
+	}
+	for _, id := range r.EntryPoints {
+		if err := enc.Encode(struct {
+			Type string `json:"type"`
+			ID   string `json:"id"`
+		}{Type: "entry_point", ID: id}); err != nil {
+			return err
+		}
+	}
+	for _, node := range r.Nodes {
+		if err := enc.Encode(struct {
+			Type string `json:"type"`
+			Node
+		}{Type: "node", Node: node}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func symbolID(fn graph.Function) string {
@@ -299,7 +353,7 @@ func removedCalls(current, old *graph.Graph) []RemovedCall {
 	return out
 }
 
-func compactLineRanges(path string, lines []int) []ChangedLineRange {
+func compactLineRanges(_ string, lines []int) []ChangedLineRange {
 	if len(lines) == 0 {
 		return nil
 	}
@@ -315,11 +369,11 @@ func compactLineRanges(path string, lines []int) []ChangedLineRange {
 			end = line
 			continue
 		}
-		ranges = append(ranges, ChangedLineRange{Path: path, Start: start, End: end})
+		ranges = append(ranges, ChangedLineRange{Start: start, End: end})
 		start = line
 		end = line
 	}
-	ranges = append(ranges, ChangedLineRange{Path: path, Start: start, End: end})
+	ranges = append(ranges, ChangedLineRange{Start: start, End: end})
 	return ranges
 }
 

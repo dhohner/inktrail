@@ -1,6 +1,6 @@
 # inktrail
 
-AI-agent JSON report for Go code touched by git diffs.
+AI-agent JSONL report for Go code touched by git diffs.
 
 `inktrail` helps autonomous coding agents review changes by producing a content-free impact report: changed files, hunk ranges, changed symbols, deleted symbols, removed call edges, entry points, and relevant call graph nodes.
 
@@ -12,100 +12,48 @@ go run ./cmd/inktrail <commit>       # report for one commit vs <commit>^
 go run ./cmd/inktrail <base> <head>  # report for commit range
 ```
 
-Output is JSON. Changed source content is intentionally not included.
+Output is JSONL: one compact JSON object per line. Changed source content is intentionally not included.
 
-## Report fields
+## Record types
 
 - `summary`: counts for files, test files, changed symbols, deleted symbols, removed calls, entry points, and nodes
-- `files`: changed file metadata
+- `file`: changed file metadata
   - `status`: `added`, `modified`, `deleted`, or `renamed`
-  - `old_path`: source path for modified/renamed/deleted files when available
+  - `old_path`: source path for renamed/deleted files when available
   - `path`: current path
   - `test`: whether file is test-only scope
   - `hunks`: old/new line ranges without content
-- `changed_symbols`: current symbols containing added/modified production-code lines
-- `deleted_symbols`: symbols present in the base AST but absent from current AST
-- `removed_calls`: call edges present in the base AST but absent from current AST
-- `entry_points`: root callers that reach changed symbols
-- `nodes`: relevant current call graph nodes with call sites and changed line ranges
+- `changed_symbol`: current symbol containing added/modified production-code lines (`id`)
+- `deleted_symbol`: symbol present in the base AST but absent from current AST (`id`)
+- `removed_call`: call edge present in the base AST but absent from current AST
+- `entry_point`: root caller that reaches changed symbols (`id`)
+- `node`: relevant current call graph node with call sites and changed line ranges
 
 ## Example
 
-```json
-{
-  "summary": {
-    "files": 2,
-    "test_files": 1,
-    "changed_symbols": 1,
-    "deleted_symbols": 1,
-    "removed_calls": 1,
-    "entry_points": 1,
-    "nodes": 2
-  },
-  "files": [
-    {
-      "status": "modified",
-      "old_path": "service/b.go",
-      "path": "service/b.go",
-      "test": false,
-      "hunks": [
-        {
-          "old_start": 16,
-          "old_lines": 4,
-          "new_start": 16,
-          "new_lines": 5
-        }
-      ]
-    }
-  ],
-  "changed_symbols": ["service/b.go::service.ServiceB.Do"],
-  "deleted_symbols": ["repository/old.go::repository.RepositoryOld.Get"],
-  "removed_calls": [
-    {
-      "from": "service/b.go::service.ServiceB.Do",
-      "to": "repository/old.go::repository.RepositoryOld.Get",
-      "call_site": { "path": "service/b.go", "line": 18 }
-    }
-  ],
-  "entry_points": ["controller/a.go::controller.ControllerA.Handle"],
-  "nodes": [
-    {
-      "id": "service/b.go::service.ServiceB.Do",
-      "path": "service/b.go",
-      "name": "Do",
-      "kind": "method",
-      "start_line": 16,
-      "end_line": 22,
-      "calls": [
-        {
-          "to": "repository/b.go::repository.RepositoryB.Get",
-          "call_site": { "path": "service/b.go", "line": 19 }
-        }
-      ],
-      "changed": true,
-      "changed_lines": [{ "path": "service/b.go", "start": 18, "end": 20 }],
-      "boundary": null,
-      "package": "service",
-      "file": "service/b.go",
-      "lineRange": { "start": 16, "end": 22 }
-    }
-  ]
-}
+```jsonl
+{"type":"summary","files":2,"test_files":1,"changed_symbols":1,"deleted_symbols":1,"removed_calls":1,"entry_points":1,"nodes":1}
+{"type":"file","status":"modified","old_path":"service/b.go","path":"service/b.go","test":false,"hunks":[{"old_start":16,"old_lines":4,"new_start":16,"new_lines":5}]}
+{"type":"changed_symbol","id":"service/b.go::service.ServiceB.Do"}
+{"type":"deleted_symbol","id":"repository/old.go::repository.RepositoryOld.Get"}
+{"type":"removed_call","from":"service/b.go::service.ServiceB.Do","to":"repository/old.go::repository.RepositoryOld.Get","call_site":{"path":"service/b.go","line":18}}
+{"type":"entry_point","id":"controller/a.go::controller.ControllerA.Handle"}
+{"type":"node","id":"service/b.go::service.ServiceB.Do","path":"service/b.go","name":"Do","kind":"method","start_line":16,"end_line":22,"calls":[{"to":"repository/b.go::repository.RepositoryB.Get","call_site":{"path":"service/b.go","line":19}}],"changed":true,"changed_lines":[{"start":18,"end":20}],"package":"service"}
 ```
 
 ## Scope
 
 Diff scope:
 
-- target-side added/modified Go lines for `changed_symbols`
+- target-side added/modified Go lines for `changed_symbol`
 - file metadata and hunk ranges for production and test files
-- deleted files and deleted-only hunks included in `files`
+- deleted files and deleted-only hunks included in `file` records
 - renamed files included as `status: "renamed"`
 
 AST scope:
 
-- current AST builds `changed_symbols`, `entry_points`, and `nodes`
-- base AST builds `deleted_symbols` and `removed_calls`
+- current AST builds `changed_symbol`, `entry_point`, and `node` records
+- base AST builds `deleted_symbol` and `removed_call` records
 - base ref selection:
   - staged diff: `HEAD`
   - one commit: `<commit>^`

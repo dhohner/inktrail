@@ -111,7 +111,7 @@ func analyze(commits []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return report.WriteJSON(out, report.BuildWithBase(current, base, result))
+	return report.WriteJSONL(out, report.BuildWithBase(current, base, result))
 }
 
 func baseRef(args []string) string {

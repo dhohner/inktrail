@@ -69,7 +69,7 @@ func (r RepositoryB) Get() {}
 	if !changed.Changed {
 		t.Fatalf("changed node not marked changed: %#v", changed)
 	}
-	if !reflect.DeepEqual(changed.ChangedLines, []ChangedLineRange{{Path: "app.go", Start: 10, End: 10}}) {
+	if !reflect.DeepEqual(changed.ChangedLines, []ChangedLineRange{{Start: 10, End: 10}}) {
 		t.Fatalf("changed_lines=%#v", changed.ChangedLines)
 	}
 	if changed.Kind != "method" || changed.Package != "app" || changed.Name != "Do" {
@@ -110,7 +110,7 @@ func F() {
 		{Path: "app.go", LineNo: 7},
 	}})
 	node := nodesByID(r.Nodes)["app.go::app.F"]
-	want := []ChangedLineRange{{Path: "app.go", Start: 4, End: 5}, {Path: "app.go", Start: 7, End: 7}}
+	want := []ChangedLineRange{{Start: 4, End: 5}, {Start: 7, End: 7}}
 	if !reflect.DeepEqual(node.ChangedLines, want) {
 		t.Fatalf("changed_lines=%#v want=%#v", node.ChangedLines, want)
 	}
@@ -171,8 +171,27 @@ func TestWriteJSONWritesIndentedReport(t *testing.T) {
 	if !json.Valid(buf.Bytes()) {
 		t.Fatalf("invalid json: %s", buf.String())
 	}
-	if got := buf.String(); got != "{\n  \"summary\": {\n    \"files\": 0,\n    \"test_files\": 0,\n    \"changed_symbols\": 0,\n    \"deleted_symbols\": 0,\n    \"removed_calls\": 0,\n    \"entry_points\": 0,\n    \"nodes\": 0\n  },\n  \"files\": null,\n  \"changed_symbols\": [\n    \"app.go::app.F\"\n  ],\n  \"deleted_symbols\": null,\n  \"removed_calls\": null,\n  \"entry_points\": null,\n  \"nodes\": null\n}\n" {
-		t.Fatalf("json=%q", got)
+}
+
+func TestWriteJSONLWritesOneRecordPerLine(t *testing.T) {
+	r := Report{
+		Summary:        Summary{Files: 1, ChangedSymbols: 1, Nodes: 1},
+		Files:          []diff.FileChange{{Status: "modified", Path: "app.go"}},
+		ChangedSymbols: []string{"app.go::app.F"},
+		Nodes:          []Node{{ID: "app.go::app.F", Path: "app.go", Name: "F", Kind: "function", StartLine: 3, EndLine: 5, Changed: true, ChangedLines: []ChangedLineRange{{Start: 4, End: 4}}, Package: "app"}},
+	}
+	var buf bytes.Buffer
+
+	if err := WriteJSONL(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+
+	want := "{\"type\":\"summary\",\"files\":1,\"test_files\":0,\"changed_symbols\":1,\"deleted_symbols\":0,\"removed_calls\":0,\"entry_points\":0,\"nodes\":1}\n" +
+		"{\"type\":\"file\",\"status\":\"modified\",\"path\":\"app.go\",\"test\":false}\n" +
+		"{\"type\":\"changed_symbol\",\"id\":\"app.go::app.F\"}\n" +
+		"{\"type\":\"node\",\"id\":\"app.go::app.F\",\"path\":\"app.go\",\"name\":\"F\",\"kind\":\"function\",\"start_line\":3,\"end_line\":5,\"changed\":true,\"changed_lines\":[{\"start\":4,\"end\":4}],\"package\":\"app\"}\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("jsonl=%q", got)
 	}
 }
 
