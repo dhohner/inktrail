@@ -2,7 +2,7 @@
 
 AI-agent JSONL report for Go code touched by git diffs.
 
-`inktrail` helps autonomous coding agents review changes by producing a content-free impact report: changed files, hunk ranges, changed symbols, deleted symbols, removed call edges, entry points, and relevant call graph nodes.
+`inktrail` helps autonomous coding agents review changes by producing an impact report: changed files, changed hunk code, changed symbols, deleted symbols, removed call edges, entry points, and relevant call graph nodes.
 
 ## Usage
 
@@ -14,17 +14,17 @@ go run ./cmd/inktrail <commit>       # report for one commit vs <commit>^
 go run ./cmd/inktrail <base> <head>  # report for commit range
 ```
 
-Output is JSONL: one compact JSON object per line. Changed source content is intentionally not included.
+Output is JSONL: one compact JSON object per line. `file` records include changed hunk lines so review agents can inspect the patch without re-reading git diff output.
 
 ## Record types
 
 - `summary`: counts for files, test files, changed symbols, deleted symbols, removed calls, entry points, and nodes
 - `file`: changed file metadata
   - `status`: `added`, `modified`, `deleted`, or `renamed`
-  - `old_path`: source path for renamed/deleted files when available
+  - `old_path`: source path for renamed/deleted files when available; omitted for unchanged paths
   - `path`: current path
   - `test`: whether file is test-only scope
-  - `hunks`: old/new line ranges without content
+  - `hunks`: old/new line ranges plus changed `lines` (`op`, `old_line`, `new_line`, `content`)
 - `changed_symbol`: current symbol containing added/modified production-code lines (`id`)
 - `deleted_symbol`: symbol present in the base AST but absent from current AST (`id`)
 - `removed_call`: call edge present in the base AST but absent from current AST
@@ -35,7 +35,7 @@ Output is JSONL: one compact JSON object per line. Changed source content is int
 
 ```jsonl
 {"type":"summary","files":2,"test_files":1,"changed_symbols":1,"deleted_symbols":1,"removed_calls":1,"entry_points":1,"nodes":1}
-{"type":"file","status":"modified","old_path":"service/b.go","path":"service/b.go","test":false,"hunks":[{"old_start":16,"old_lines":4,"new_start":16,"new_lines":5}]}
+{"type":"file","status":"modified","path":"service/b.go","test":false,"hunks":[{"old_start":16,"old_lines":4,"new_start":16,"new_lines":5,"lines":[{"op":"delete","old_line":18,"content":"old.RepositoryOld{}.Get()"},{"op":"add","new_line":18,"content":"repository.RepositoryB{}.Get()"}]}]}
 {"type":"changed_symbol","id":"service/b.go::service.ServiceB.Do"}
 {"type":"deleted_symbol","id":"repository/old.go::repository.RepositoryOld.Get"}
 {"type":"removed_call","from":"service/b.go::service.ServiceB.Do","to":"repository/old.go::repository.RepositoryOld.Get","call_site":{"path":"service/b.go","line":18}}

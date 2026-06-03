@@ -1,6 +1,9 @@
 package diff
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func TestParseDiffOnlyAddedTargetLines(t *testing.T) {
 	diff := []byte(`diff --git a/main.go b/main.go
@@ -58,16 +61,17 @@ new file mode 100644
 	}
 
 	want := []FileChange{
-		{Status: "modified", OldPath: "app.go", Path: "app.go", Hunks: []Hunk{{OldStart: 10, OldLines: 1, NewStart: 10, NewLines: 2}}},
-		{Status: "added", OldPath: "main_test.go", Path: "main_test.go", Test: true, Hunks: []Hunk{{OldStart: 0, OldLines: 0, NewStart: 1, NewLines: 1}}},
+		{Status: "modified", Path: "app.go", Hunks: []Hunk{{OldStart: 10, OldLines: 1, NewStart: 10, NewLines: 2, Lines: []HunkLine{
+			{Op: "delete", OldLine: 10, Content: "old()"},
+			{Op: "add", NewLine: 10, Content: "new()"},
+			{Op: "add", NewLine: 11, Content: "next()"},
+		}}}},
+		{Status: "added", Path: "main_test.go", Test: true, Hunks: []Hunk{{OldStart: 0, OldLines: 0, NewStart: 1, NewLines: 1, Lines: []HunkLine{
+			{Op: "add", NewLine: 1, Content: "test()"},
+		}}}},
 	}
-	if len(got) != len(want) {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got=%#v want=%#v", got, want)
-	}
-	for i := range want {
-		if got[i].Status != want[i].Status || got[i].OldPath != want[i].OldPath || got[i].Path != want[i].Path || got[i].Test != want[i].Test || len(got[i].Hunks) != len(want[i].Hunks) || got[i].Hunks[0] != want[i].Hunks[0] {
-			t.Fatalf("got[%d]=%#v want=%#v", i, got[i], want[i])
-		}
 	}
 }
 

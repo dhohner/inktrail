@@ -197,12 +197,14 @@ func chainsToChanged(g *graph.Graph, changedByFunc map[string][]ChangedLineRange
 
 func WriteJSON(w io.Writer, r Report) error {
 	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
 	enc.SetIndent("", "  ")
 	return enc.Encode(r)
 }
 
 func WriteJSONL(w io.Writer, r Report) error {
 	enc := json.NewEncoder(w)
+	enc.SetEscapeHTML(false)
 	if err := enc.Encode(struct {
 		Type string `json:"type"`
 		Summary

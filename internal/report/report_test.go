@@ -175,8 +175,10 @@ func TestWriteJSONWritesIndentedReport(t *testing.T) {
 
 func TestWriteJSONLWritesOneRecordPerLine(t *testing.T) {
 	r := Report{
-		Summary:        Summary{Files: 1, ChangedSymbols: 1, Nodes: 1},
-		Files:          []diff.FileChange{{Status: "modified", Path: "app.go"}},
+		Summary: Summary{Files: 1, ChangedSymbols: 1, Nodes: 1},
+		Files: []diff.FileChange{{Status: "modified", Path: "app.go", Hunks: []diff.Hunk{{OldStart: 4, OldLines: 1, NewStart: 4, NewLines: 1, Lines: []diff.HunkLine{
+			{Op: "add", NewLine: 4, Content: "if a < b && c > d {"},
+		}}}}},
 		ChangedSymbols: []string{"app.go::app.F"},
 		Nodes:          []Node{{ID: "app.go::app.F", Path: "app.go", Name: "F", Kind: "function", StartLine: 3, EndLine: 5, Changed: true, ChangedLines: []ChangedLineRange{{Start: 4, End: 4}}, Package: "app"}},
 	}
@@ -187,7 +189,7 @@ func TestWriteJSONLWritesOneRecordPerLine(t *testing.T) {
 	}
 
 	want := "{\"type\":\"summary\",\"files\":1,\"test_files\":0,\"changed_symbols\":1,\"deleted_symbols\":0,\"removed_calls\":0,\"entry_points\":0,\"nodes\":1}\n" +
-		"{\"type\":\"file\",\"status\":\"modified\",\"path\":\"app.go\",\"test\":false}\n" +
+		"{\"type\":\"file\",\"status\":\"modified\",\"path\":\"app.go\",\"test\":false,\"hunks\":[{\"old_start\":4,\"old_lines\":1,\"new_start\":4,\"new_lines\":1,\"lines\":[{\"op\":\"add\",\"new_line\":4,\"content\":\"if a < b && c > d {\"}]}]}\n" +
 		"{\"type\":\"changed_symbol\",\"id\":\"app.go::app.F\"}\n" +
 		"{\"type\":\"node\",\"id\":\"app.go::app.F\",\"path\":\"app.go\",\"name\":\"F\",\"kind\":\"function\",\"start_line\":3,\"end_line\":5,\"changed\":true,\"changed_lines\":[{\"start\":4,\"end\":4}],\"package\":\"app\"}\n"
 	if got := buf.String(); got != want {

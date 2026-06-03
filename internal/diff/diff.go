@@ -19,15 +19,24 @@ type Line struct {
 	Content string
 }
 
-// Hunk identifies changed line ranges without changed content.
+// Hunk identifies changed line ranges and the changed code lines in that range.
 type Hunk struct {
-	OldStart int `json:"old_start"`
-	OldLines int `json:"old_lines"`
-	NewStart int `json:"new_start"`
-	NewLines int `json:"new_lines"`
+	OldStart int        `json:"old_start"`
+	OldLines int        `json:"old_lines"`
+	NewStart int        `json:"new_start"`
+	NewLines int        `json:"new_lines"`
+	Lines    []HunkLine `json:"lines,omitempty"`
 }
 
-// FileChange identifies one changed file without changed content.
+// HunkLine is one changed line in a unified diff hunk.
+type HunkLine struct {
+	Op      string `json:"op"`
+	OldLine int    `json:"old_line,omitempty"`
+	NewLine int    `json:"new_line,omitempty"`
+	Content string `json:"content"`
+}
+
+// FileChange identifies one changed file and its changed hunks.
 type FileChange struct {
 	Status  string `json:"status"`
 	OldPath string `json:"old_path,omitempty"`
@@ -131,7 +140,7 @@ func gitDiff(opts Options) ([]byte, error) {
 	return out, nil
 }
 
-// Parse extracts target-side changed lines and content-free file/hunk metadata from unified diff bytes.
+// Parse extracts target-side changed lines and file/hunk metadata from unified diff bytes.
 func Parse(raw []byte) (Result, error) {
 	lines, err := ParseDiff(raw)
 	if err != nil {
@@ -197,10 +206,12 @@ func ParseDiff(raw []byte) ([]Line, error) {
 	return lines, nil
 }
 
-// ParseFiles extracts file status and hunk ranges without changed content.
+// ParseFiles extracts file status, hunk ranges, and changed hunk content.
 func ParseFiles(raw []byte) ([]FileChange, error) {
 	var files []FileChange
 	current := -1
+	hunkIndex := -1
+	oldLine, newLine := 0, 0
 
 	s := bufio.NewScanner(bytes.NewReader(raw))
 	for s.Scan() {
@@ -210,6 +221,7 @@ func ParseFiles(raw []byte) ([]FileChange, error) {
 			oldPath, path := parseDiffGitPaths(text)
 			files = append(files, FileChange{Status: "modified", OldPath: oldPath, Path: path, Test: isTestPath(path)})
 			current = len(files) - 1
+			hunkIndex = -1
 		case current >= 0 && strings.HasPrefix(text, "new file mode "):
 			files[current].Status = "added"
 		case current >= 0 && strings.HasPrefix(text, "deleted file mode "):
@@ -227,18 +239,42 @@ func ParseFiles(raw []byte) ([]FileChange, error) {
 				files[current].Test = isTestPath(path)
 			}
 		case current >= 0:
-			m := hunkHeader.FindStringSubmatch(text)
-			if m == nil {
+			if m := hunkHeader.FindStringSubmatch(text); m != nil {
+				hunk, err := parseHunk(m)
+				if err != nil {
+					return nil, err
+				}
+				files[current].Hunks = append(files[current].Hunks, hunk)
+				hunkIndex = len(files[current].Hunks) - 1
+				oldLine, newLine = hunk.OldStart, hunk.NewStart
 				continue
 			}
-			hunk, err := parseHunk(m)
-			if err != nil {
-				return nil, err
+			if hunkIndex < 0 || strings.HasPrefix(text, `\ No newline at end of file`) {
+				continue
 			}
-			files[current].Hunks = append(files[current].Hunks, hunk)
+			hunk := &files[current].Hunks[hunkIndex]
+			switch {
+			case strings.HasPrefix(text, "+") && !strings.HasPrefix(text, "+++"):
+				hunk.Lines = append(hunk.Lines, HunkLine{Op: "add", NewLine: newLine, Content: strings.TrimPrefix(text, "+")})
+				newLine++
+			case strings.HasPrefix(text, "-") && !strings.HasPrefix(text, "---"):
+				hunk.Lines = append(hunk.Lines, HunkLine{Op: "delete", OldLine: oldLine, Content: strings.TrimPrefix(text, "-")})
+				oldLine++
+			default:
+				oldLine++
+				newLine++
+			}
 		}
 	}
-	return files, s.Err()
+	if err := s.Err(); err != nil {
+		return nil, err
+	}
+	for i := range files {
+		if files[i].OldPath == files[i].Path && (files[i].Status == "added" || files[i].Status == "modified") {
+			files[i].OldPath = ""
+		}
+	}
+	return files, nil
 }
 
 func parseHunk(m []string) (Hunk, error) {
