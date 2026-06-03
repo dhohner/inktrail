@@ -7,7 +7,9 @@ AI-agent JSONL report for Go code touched by git diffs.
 ## Usage
 
 ```sh
-go run ./cmd/inktrail                # report for staged diff vs HEAD
+go run ./cmd/inktrail                # interactive target selector (or staged diff when stdio is non-TTY)
+go run ./cmd/inktrail --no-ui        # agent-safe staged diff, or HEAD if nothing is staged and worktree is clean
+go run ./cmd/inktrail --agent        # alias for --no-ui
 go run ./cmd/inktrail <commit>       # report for one commit vs <commit>^
 go run ./cmd/inktrail <base> <head>  # report for commit range
 ```

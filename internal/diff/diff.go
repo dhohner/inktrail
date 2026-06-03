@@ -68,6 +68,40 @@ func Detect(opts Options) ([]Line, error) {
 	return result.Lines, err
 }
 
+// HasStagedChanges reports whether the index contains any staged file changes.
+func HasStagedChanges() (bool, error) {
+	cmd := exec.Command("git", "diff", "--staged", "--name-only")
+	out, err := cmd.Output()
+	if err != nil {
+		if exit, ok := err.(*exec.ExitError); ok {
+			return false, fmt.Errorf("git diff failed: %s", strings.TrimSpace(string(exit.Stderr)))
+		}
+		return false, err
+	}
+	return strings.TrimSpace(string(out)) != "", nil
+}
+
+// HasUnstagedChanges reports whether the worktree contains unstaged tracked changes or untracked files.
+func HasUnstagedChanges() (bool, error) {
+	cmd := exec.Command("git", "status", "--porcelain", "--untracked-files=normal")
+	out, err := cmd.Output()
+	if err != nil {
+		if exit, ok := err.(*exec.ExitError); ok {
+			return false, fmt.Errorf("git status failed: %s", strings.TrimSpace(string(exit.Stderr)))
+		}
+		return false, err
+	}
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "??") || len(line) > 1 && line[1] != ' ' {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func gitDiff(opts Options) ([]byte, error) {
 	args := []string{"diff", "--no-ext-diff", "--unified=0"}
 	if !opts.IncludeFormatting {

@@ -51,6 +51,9 @@ var modeOptions = []modeOption{
 }
 
 var (
+	hasStagedChanges   = diff.HasStagedChanges
+	hasUnstagedChanges = diff.HasUnstagedChanges
+
 	appStyle = lipgloss.NewStyle().
 			Margin(1, 2).
 			Padding(1, 3).
@@ -82,11 +85,13 @@ func main() {
 func run(args []string, out io.Writer) error {
 	flags := flag.NewFlagSet("inktrail", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
+	noUI := flags.Bool("no-ui", false, "skip the interactive selector; analyze staged changes, or HEAD if nothing is staged")
+	flags.BoolVar(noUI, "agent", false, "alias for --no-ui")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	commits := flags.Args()
-	if len(commits) == 0 {
+	if len(commits) == 0 && !*noUI && stdioIsTerminal() {
 		selected, err := promptAnalysis()
 		if err != nil {
 			return err
@@ -94,10 +99,26 @@ func run(args []string, out io.Writer) error {
 		commits = selected
 	}
 
-	return analyze(commits, out)
+	return analyze(commits, out, *noUI)
 }
 
-func analyze(commits []string, out io.Writer) error {
+func stdioIsTerminal() bool {
+	stdin, err := os.Stdin.Stat()
+	if err != nil || stdin.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	stdout, err := os.Stdout.Stat()
+	if err != nil || stdout.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	return true
+}
+
+func analyze(commits []string, out io.Writer, fallbackToHead bool) error {
+	commits, err := resolveCommits(commits, fallbackToHead)
+	if err != nil {
+		return err
+	}
 	result, err := diff.Inspect(diff.Options{Commits: commits})
 	if err != nil {
 		return err
@@ -112,6 +133,27 @@ func analyze(commits []string, out io.Writer) error {
 		return err
 	}
 	return report.WriteJSONL(out, report.BuildWithBase(current, base, result))
+}
+
+func resolveCommits(commits []string, fallbackToHead bool) ([]string, error) {
+	if len(commits) != 0 || !fallbackToHead {
+		return commits, nil
+	}
+	staged, err := hasStagedChanges()
+	if err != nil {
+		return nil, err
+	}
+	if staged {
+		return commits, nil
+	}
+	unstaged, err := hasUnstagedChanges()
+	if err != nil {
+		return nil, err
+	}
+	if unstaged {
+		return nil, fmt.Errorf("refusing to analyze HEAD fallback with unstaged or untracked changes; stage, commit, stash, or pass an explicit commit/range")
+	}
+	return []string{"HEAD"}, nil
 }
 
 func baseRef(args []string) string {
