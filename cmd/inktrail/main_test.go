@@ -127,6 +127,31 @@ func TestResolveCommitsExplicitCommitsBypassFallback(t *testing.T) {
 	}
 }
 
+func TestAnalyzePassesExplicitRangeAndUsesRangeBase(t *testing.T) {
+	var inspected []string
+	var baseRefs []string
+	withAnalysisDeps(t, func(opts diff.Options) (diff.Result, error) {
+		inspected = append([]string(nil), opts.Commits...)
+		return diff.Result{Files: []diff.FileChange{{Status: "modified", Path: "app.go"}}}, nil
+	}, func(string) (*graph.Graph, error) {
+		return &graph.Graph{}, nil
+	}, func(ref string) (*graph.Graph, error) {
+		baseRefs = append(baseRefs, ref)
+		return &graph.Graph{}, nil
+	})
+
+	var out bytes.Buffer
+	if err := analyze([]string{"main", "feature"}, &out, true); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(inspected, []string{"main", "feature"}) {
+		t.Fatalf("inspected commits=%v, want [main feature]", inspected)
+	}
+	if !reflect.DeepEqual(baseRefs, []string{"main"}) {
+		t.Fatalf("base refs=%v, want [main]", baseRefs)
+	}
+}
+
 func boolFunc(v bool) func() (bool, error) {
 	return func() (bool, error) { return v, nil }
 }
