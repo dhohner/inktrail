@@ -14,7 +14,8 @@ func Build(g *graph.Graph, result diff.Result) Report {
 
 func BuildWithBase(g, old *graph.Graph, result diff.Result) Report {
 	movedSymbols := movedSymbols(g, old)
-	currentMovedRanges, oldMovedRanges := movedFunctionRanges(g, old, movedSymbols)
+	equalMoves := equalBodyMoves(movedSymbols)
+	currentMovedRanges, oldMovedRanges := movedFunctionRanges(g, old, equalMoves)
 	result.Lines = filterMovedLines(result.Lines, currentMovedRanges)
 	result.Files = filterMovedHunkLines(result.Files, currentMovedRanges, oldMovedRanges)
 
@@ -22,7 +23,7 @@ func BuildWithBase(g, old *graph.Graph, result diff.Result) Report {
 	nodeNames, entryPoints := impactedNodes(g, changedByFunc)
 	nodes := buildNodes(g, nodeNames, changedByFunc)
 
-	changedSymbols := keysAsSymbolIDsExcluding(g, changedByFunc, movedCurrentNames(movedSymbols))
+	changedSymbols := keysAsSymbolIDsExcluding(g, changedByFunc, movedCurrentNames(equalMoves))
 	entryPointIDs := sortedKeys(entryPoints)
 	deletedSymbols := deletedSymbols(g, old, movedOldIDs(movedSymbols))
 	removedCalls := removedCalls(g, old, movedSymbolMap(movedSymbols))

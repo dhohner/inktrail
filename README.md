@@ -14,7 +14,7 @@ go run ./cmd/inktrail <commit>       # report for one commit vs <commit>^
 go run ./cmd/inktrail <base> <head>  # report for commit range
 ```
 
-Output is JSONL: one compact JSON object per line. `file` records include review metadata (`language`, `classification`, `diffstat`, `symbols`, `risk_flags`, `content_ref`). Small patches include `hunks`; large added/generated/vendor/binary files omit full hunks and include a preview plus lazy-read `content_ref` instead.
+Output is JSONL: one compact JSON object per line. `file` records include review metadata (`language`, `classification`, `diffstat`, `symbols`, `content_ref`). Small patches include `hunks`; large added/generated/vendor/binary files omit full hunks and include a preview plus lazy-read `content_ref` instead.
 
 ## Record types
 
@@ -28,7 +28,6 @@ Output is JSONL: one compact JSON object per line. `file` records include review
   - `classification`: `source`, `test`, `generated`, `vendor`, or `binary`
   - `diffstat`: added/deleted line and byte counts
   - `symbols`: relevant impacted symbols in the file when known
-  - `risk_flags`: review hints such as `large_added_file`, `auth`, `secret`, `crypto`, `external_input`, `command_exec`, `sql`
   - `content_ref`: lazy-read handle (`kind: workspace_file`, `path`, optional `sha256`)
   - `hunks`: old/new line ranges plus changed `lines` (`op`, `old_line`, `new_line`, `content`) when included
   - `hunks_omitted`, `preview`, `omitted_lines`: present when full added-file content is suppressed

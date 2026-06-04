@@ -3,6 +3,7 @@ package report
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -21,17 +22,18 @@ func fileRecord(file diff.FileChange, symbols []string) FileRecord {
 	added := addedContents(file)
 	compact := file.Status == "added" && (stat.AddedBytes > largeAddedFileBytes || stat.AddedLines > largeAddedFileLines || isGenerated(file.Path, added) || isVendorPath(file.Path) || isBinaryPath(file.Path))
 	record := FileRecord{
-		Type:           "file",
-		Status:         file.Status,
-		OldPath:        file.OldPath,
-		Path:           file.Path,
-		Test:           file.Test,
-		Language:       language(file.Path),
-		Classification: classification(file, added),
-		DiffStat:       stat,
-		Symbols:        symbols,
-		RiskFlags:      riskFlags(file, added, compact),
-		ContentRef:     contentRef(file, added),
+		Type:              "file",
+		Status:            file.Status,
+		OldPath:           file.OldPath,
+		Path:              file.Path,
+		Test:              file.Test,
+		Language:          language(file.Path),
+		Classification:    classification(file, added),
+		ChangeIntent:      changeIntent(file),
+		DiffStat:          stat,
+		Symbols:           symbols,
+		ContentRef:        contentRef(file),
+		MovedLinesOmitted: file.MovedLinesOmitted,
 	}
 	if compact {
 		record.HunksOmitted = true
@@ -72,16 +74,23 @@ func addedContents(file diff.FileChange) []string {
 	return lines
 }
 
-func contentRef(file diff.FileChange, added []string) *ContentRef {
+func contentRef(file diff.FileChange) *ContentRef {
 	if file.Path == "" || file.Status == "deleted" {
 		return nil
 	}
 	ref := &ContentRef{Kind: "workspace_file", Path: file.Path}
-	if file.Status == "added" {
-		sum := sha256.Sum256([]byte(strings.Join(added, "\n")))
+	if content, err := os.ReadFile(file.Path); err == nil {
+		sum := sha256.Sum256(content)
 		ref.SHA256 = hex.EncodeToString(sum[:])
 	}
 	return ref
+}
+
+func changeIntent(file diff.FileChange) []string {
+	if file.MovedLinesOmitted == 0 {
+		return nil
+	}
+	return []string{"symbol_moves", "package_reorganization"}
 }
 
 func preview(lines []string) *FilePreview {
@@ -146,44 +155,15 @@ func classification(file diff.FileChange, added []string) []string {
 	return out
 }
 
-func riskFlags(file diff.FileChange, added []string, compact bool) []string {
-	flags := map[string]bool{}
-	if compact {
-		flags["large_added_file"] = true
-	}
-	for _, c := range classification(file, added) {
-		if c != "source" {
-			flags[c] = true
-		}
-	}
-	content := strings.ToLower(strings.Join(added, "\n"))
-	checks := map[string][]string{
-		"auth":           {"auth", "oauth", "jwt", "session", "permission"},
-		"secret":         {"secret", "password", "passwd", "api_key", "apikey", "token"},
-		"crypto":         {"crypto", "sha256", "md5", "encrypt", "decrypt", "cipher"},
-		"external_input": {"http.", "url.", "json.", "formvalue", "query", "body"},
-		"command_exec":   {"exec.", "os/exec", "system("},
-		"sql":            {"select ", "insert ", "update ", "delete ", "sql."},
-	}
-	for flag, needles := range checks {
-		for _, needle := range needles {
-			if strings.Contains(content, needle) {
-				flags[flag] = true
-				break
-			}
-		}
-	}
-	return sortedKeys(flags)
-}
-
 func isGenerated(path string, lines []string) bool {
 	lowerPath := strings.ToLower(path)
 	if strings.Contains(lowerPath, "generated") || strings.Contains(lowerPath, ".pb.go") || strings.Contains(lowerPath, "_gen.") {
 		return true
 	}
 	for _, line := range lines {
-		lower := strings.ToLower(line)
-		if strings.Contains(lower, "code generated") || strings.Contains(lower, "do not edit") || strings.Contains(lower, "auto-generated") {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		if strings.HasPrefix(trimmed, "//") && (strings.Contains(lower, "code generated") || strings.Contains(lower, "do not edit") || strings.Contains(lower, "auto-generated")) {
 			return true
 		}
 	}

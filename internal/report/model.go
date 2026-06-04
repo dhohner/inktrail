@@ -62,26 +62,28 @@ type FilePreview struct {
 }
 
 type FileRecord struct {
-	Type           string       `json:"type"`
-	Status         string       `json:"status"`
-	OldPath        string       `json:"old_path,omitempty"`
-	Path           string       `json:"path"`
-	Test           bool         `json:"test"`
-	Language       string       `json:"language,omitempty"`
-	Classification []string     `json:"classification,omitempty"`
-	DiffStat       DiffStat     `json:"diffstat"`
-	Symbols        []string     `json:"symbols,omitempty"`
-	RiskFlags      []string     `json:"risk_flags,omitempty"`
-	ContentRef     *ContentRef  `json:"content_ref,omitempty"`
-	Preview        *FilePreview `json:"preview,omitempty"`
-	HunksOmitted   bool         `json:"hunks_omitted,omitempty"`
-	OmittedLines   int          `json:"omitted_lines,omitempty"`
-	Hunks          []diff.Hunk  `json:"hunks,omitempty"`
+	Type              string       `json:"type"`
+	Status            string       `json:"status"`
+	OldPath           string       `json:"old_path,omitempty"`
+	Path              string       `json:"path"`
+	Test              bool         `json:"test"`
+	Language          string       `json:"language,omitempty"`
+	Classification    []string     `json:"classification,omitempty"`
+	ChangeIntent      []string     `json:"change_intent,omitempty"`
+	DiffStat          DiffStat     `json:"diffstat"`
+	Symbols           []string     `json:"symbols,omitempty"`
+	ContentRef        *ContentRef  `json:"content_ref,omitempty"`
+	Preview           *FilePreview `json:"preview,omitempty"`
+	HunksOmitted      bool         `json:"hunks_omitted,omitempty"`
+	OmittedLines      int          `json:"omitted_lines,omitempty"`
+	MovedLinesOmitted int          `json:"moved_lines_omitted,omitempty"`
+	Hunks             []diff.Hunk  `json:"hunks,omitempty"`
 }
 
 type MovedSymbol struct {
-	From string `json:"from"`
-	To   string `json:"to"`
+	From            string `json:"from"`
+	To              string `json:"to"`
+	BodySHA256Equal bool   `json:"body_sha256_equal"`
 }
 
 type Summary struct {

@@ -15,10 +15,10 @@ func movedSymbols(current, old *graph.Graph) []MovedSymbol {
 	var out []MovedSymbol
 	for name, oldFn := range old.Functions {
 		currentFn, ok := current.Functions[name]
-		if !ok || oldFn.Path == currentFn.Path || oldFn.Source != currentFn.Source {
+		if !ok || oldFn.Path == currentFn.Path {
 			continue
 		}
-		out = append(out, MovedSymbol{From: symbolID(oldFn), To: symbolID(currentFn)})
+		out = append(out, MovedSymbol{From: symbolID(oldFn), To: symbolID(currentFn), BodySHA256Equal: oldFn.Source == currentFn.Source})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].From == out[j].From {
@@ -35,6 +35,16 @@ func movedCurrentNames(moves []MovedSymbol) map[string]bool {
 		_, name, ok := strings.Cut(move.To, "::")
 		if ok {
 			out[name] = true
+		}
+	}
+	return out
+}
+
+func equalBodyMoves(moves []MovedSymbol) []MovedSymbol {
+	out := make([]MovedSymbol, 0, len(moves))
+	for _, move := range moves {
+		if move.BodySHA256Equal {
+			out = append(out, move)
 		}
 	}
 	return out
@@ -70,6 +80,9 @@ func movedFunctionRanges(current, old *graph.Graph, moves []MovedSymbol) (map[st
 		return currentRanges, oldRanges
 	}
 	for _, move := range moves {
+		if !move.BodySHA256Equal {
+			continue
+		}
 		_, currentName, ok := strings.Cut(move.To, "::")
 		if ok {
 			if fn, exists := current.Functions[currentName]; exists {
@@ -117,9 +130,11 @@ func filterMovedHunkLines(files []diff.FileChange, currentMovedRanges, oldMovedR
 			filteredHunk.Lines = make([]diff.HunkLine, 0, len(hunk.Lines))
 			for _, line := range hunk.Lines {
 				if line.Op == "add" && inRanges(line.NewLine, currentMovedRanges[file.Path]) {
+					filteredFile.MovedLinesOmitted++
 					continue
 				}
-				if line.Op == "del" && inRanges(line.OldLine, oldMovedRanges[oldPath]) {
+				if line.Op == "delete" && inRanges(line.OldLine, oldMovedRanges[oldPath]) {
+					filteredFile.MovedLinesOmitted++
 					continue
 				}
 				filteredHunk.Lines = append(filteredHunk.Lines, line)
@@ -128,7 +143,7 @@ func filterMovedHunkLines(files []diff.FileChange, currentMovedRanges, oldMovedR
 				filteredFile.Hunks = append(filteredFile.Hunks, filteredHunk)
 			}
 		}
-		if len(file.Hunks) == 0 || len(filteredFile.Hunks) > 0 {
+		if len(file.Hunks) == 0 || len(filteredFile.Hunks) > 0 || filteredFile.MovedLinesOmitted > 0 {
 			out = append(out, filteredFile)
 		}
 	}

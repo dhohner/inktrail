@@ -3,7 +3,6 @@ package report
 import (
 	"bytes"
 	"encoding/json"
-	"reflect"
 	"testing"
 
 	"inktrail/internal/diff"
@@ -76,7 +75,7 @@ func TestWriteJSONLCompactsLargeAddedFiles(t *testing.T) {
 	if file["content_ref"] == nil || file["preview"] == nil {
 		t.Fatalf("missing lazy content metadata: %#v", file)
 	}
-	if got := file["risk_flags"].([]any); !reflect.DeepEqual(got, []any{"large_added_file"}) {
-		t.Fatalf("risk_flags=%#v", got)
+	if file["risk_flags"] != nil {
+		t.Fatalf("unexpected risk_flags=%#v", file["risk_flags"])
 	}
 }

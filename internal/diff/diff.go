@@ -38,11 +38,12 @@ type HunkLine struct {
 
 // FileChange identifies one changed file and its changed hunks.
 type FileChange struct {
-	Status  string `json:"status"`
-	OldPath string `json:"old_path,omitempty"`
-	Path    string `json:"path"`
-	Test    bool   `json:"test"`
-	Hunks   []Hunk `json:"hunks,omitempty"`
+	Status            string `json:"status"`
+	OldPath           string `json:"old_path,omitempty"`
+	Path              string `json:"path"`
+	Test              bool   `json:"test"`
+	MovedLinesOmitted int    `json:"moved_lines_omitted,omitempty"`
+	Hunks             []Hunk `json:"hunks,omitempty"`
 }
 
 // Result contains diff-derived review metadata.

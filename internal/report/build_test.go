@@ -185,7 +185,7 @@ func F() {}
 		}}}}},
 	})
 
-	wantMoves := []MovedSymbol{{From: "old.go::app.F", To: "new.go::app.F"}}
+	wantMoves := []MovedSymbol{{From: "old.go::app.F", To: "new.go::app.F", BodySHA256Equal: true}}
 	if !reflect.DeepEqual(r.MovedSymbols, wantMoves) {
 		t.Fatalf("moved_symbols=%#v want=%#v", r.MovedSymbols, wantMoves)
 	}
@@ -200,7 +200,7 @@ func F() {}
 	}
 }
 
-func TestBuildWithBaseDoesNotTreatModifiedMovesAsMoved(t *testing.T) {
+func TestBuildWithBaseTreatsModifiedMovesAsMovedAndChanged(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "new.go", `package app
 
@@ -223,13 +223,14 @@ func F() { println("old") }
 
 	r := BuildWithBase(current, old, diff.Result{Lines: []diff.Line{{Path: "new.go", LineNo: 3}}})
 
-	if len(r.MovedSymbols) != 0 {
+	wantMoves := []MovedSymbol{{From: "old.go::app.F", To: "new.go::app.F", BodySHA256Equal: false}}
+	if !reflect.DeepEqual(r.MovedSymbols, wantMoves) {
 		t.Fatalf("moved_symbols=%#v", r.MovedSymbols)
 	}
 	if !reflect.DeepEqual(r.ChangedSymbols, []string{"new.go::app.F"}) {
 		t.Fatalf("changed_symbols=%#v", r.ChangedSymbols)
 	}
-	if !reflect.DeepEqual(r.DeletedSymbols, []string{"old.go::app.F"}) {
+	if len(r.DeletedSymbols) != 0 {
 		t.Fatalf("deleted_symbols=%#v", r.DeletedSymbols)
 	}
 }
@@ -267,7 +268,43 @@ func G() {}
 	}
 }
 
-func TestBuildWithBaseDropsFilesWhoseHunksOnlyContainMovedLines(t *testing.T) {
+func TestBuildWithBaseDoesNotReportRemovedCallsForModifiedMovedSymbolsWhenCallStillExists(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "new.go", `package app
+
+func F() { println("new"); G() }
+func G() { println("new") }
+`)
+	current, err := graph.Build(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldDir := t.TempDir()
+	write(t, oldDir, "old.go", `package app
+
+func F() { G() }
+func G() {}
+`)
+	old, err := graph.Build(oldDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := BuildWithBase(current, old, diff.Result{Lines: []diff.Line{{Path: "new.go", LineNo: 3}, {Path: "new.go", LineNo: 4}}})
+
+	if len(r.MovedSymbols) != 2 || r.MovedSymbols[0].BodySHA256Equal || r.MovedSymbols[1].BodySHA256Equal {
+		t.Fatalf("moved_symbols=%#v", r.MovedSymbols)
+	}
+	if len(r.RemovedCalls) != 0 {
+		t.Fatalf("removed_calls=%#v", r.RemovedCalls)
+	}
+	if len(r.DeletedSymbols) != 0 {
+		t.Fatalf("deleted_symbols=%#v", r.DeletedSymbols)
+	}
+}
+
+func TestBuildWithBaseKeepsStructuralFilesWhoseHunksOnlyContainMovedLines(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "new.go", `package app
 
@@ -298,7 +335,7 @@ func F() {}
 	if len(r.MovedSymbols) != 1 {
 		t.Fatalf("moved_symbols=%#v", r.MovedSymbols)
 	}
-	if len(r.Files) != 0 || r.Summary.Files != 0 {
+	if len(r.Files) != 1 || r.Summary.Files != 1 || r.Files[0].MovedLinesOmitted != 1 || len(r.Files[0].Hunks) != 0 {
 		t.Fatalf("files=%#v summary=%#v", r.Files, r.Summary)
 	}
 }
