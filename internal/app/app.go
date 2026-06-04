@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"io"
 
-	"inktrail/internal/diff"
-	"inktrail/internal/graph"
-	"inktrail/internal/report"
+	"github.com/dhohner/inktrail/internal/diff"
+	"github.com/dhohner/inktrail/internal/graph"
+	"github.com/dhohner/inktrail/internal/report"
 )
 
 // Dependencies contains side-effecting operations used by App.

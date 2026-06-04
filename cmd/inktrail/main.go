@@ -6,10 +6,10 @@ import (
 	"io"
 	"os"
 
-	"inktrail/internal/app"
-	"inktrail/internal/diff"
-	"inktrail/internal/graph"
-	"inktrail/internal/ui"
+	"github.com/dhohner/inktrail/internal/app"
+	"github.com/dhohner/inktrail/internal/diff"
+	"github.com/dhohner/inktrail/internal/graph"
+	"github.com/dhohner/inktrail/internal/ui"
 )
 
 var (

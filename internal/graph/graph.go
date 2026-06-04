@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"inktrail/internal/source"
+	"github.com/dhohner/inktrail/internal/source"
 )
 
 const (

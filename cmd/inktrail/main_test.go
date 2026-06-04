@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"testing"
 
-	"inktrail/internal/diff"
-	"inktrail/internal/graph"
+	"github.com/dhohner/inktrail/internal/diff"
+	"github.com/dhohner/inktrail/internal/graph"
 )
 
 func TestAnalyzeEmptyDiffSkipsGraphBuilds(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"inktrail/internal/diff"
+	"github.com/dhohner/inktrail/internal/diff"
 )
 
 const (

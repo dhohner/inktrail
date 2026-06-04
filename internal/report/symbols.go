@@ -3,7 +3,7 @@ package report
 import (
 	"sort"
 
-	"inktrail/internal/graph"
+	"github.com/dhohner/inktrail/internal/graph"
 )
 
 func symbolID(fn graph.Function) string {

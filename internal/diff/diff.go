@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"inktrail/internal/source"
+	"github.com/dhohner/inktrail/internal/source"
 )
 
 // Line identifies one changed line in a file.

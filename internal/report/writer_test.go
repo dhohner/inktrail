@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"inktrail/internal/diff"
+	"github.com/dhohner/inktrail/internal/diff"
 )
 
 func TestWriteJSONWritesIndentedReport(t *testing.T) {

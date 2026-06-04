@@ -1,6 +1,6 @@
 package report
 
-import "inktrail/internal/diff"
+import "github.com/dhohner/inktrail/internal/diff"
 
 type LineRange struct {
 	Start int `json:"start"`

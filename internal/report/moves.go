@@ -4,8 +4,8 @@ import (
 	"sort"
 	"strings"
 
-	"inktrail/internal/diff"
-	"inktrail/internal/graph"
+	"github.com/dhohner/inktrail/internal/diff"
+	"github.com/dhohner/inktrail/internal/graph"
 )
 
 func movedSymbols(current, old *graph.Graph) []MovedSymbol {
