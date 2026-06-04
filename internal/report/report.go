@@ -105,22 +105,16 @@ func BuildWithBase(g, old *graph.Graph, result diff.Result) Report {
 func changedLineRangesByFunction(g *graph.Graph, lines []diff.Line) map[string][]ChangedLineRange {
 	lineNosByFunction := map[string][]int{}
 	for _, line := range lines {
-		for name, fn := range g.Functions {
-			if containsLine(fn, line.Path, line.LineNo) {
-				lineNosByFunction[name] = append(lineNosByFunction[name], line.LineNo)
-			}
+		for _, fn := range g.FunctionsContainingLine(line.Path, line.LineNo) {
+			lineNosByFunction[fn.Name] = append(lineNosByFunction[fn.Name], line.LineNo)
 		}
 	}
 
 	changedByFunc := map[string][]ChangedLineRange{}
 	for name, lineNos := range lineNosByFunction {
-		changedByFunc[name] = compactLineRanges(g.Functions[name].Path, lineNos)
+		changedByFunc[name] = compactLineRanges(lineNos)
 	}
 	return changedByFunc
-}
-
-func containsLine(fn graph.Function, path string, lineNo int) bool {
-	return fn.Path == path && lineNo >= fn.StartLine && lineNo <= fn.EndLine
 }
 
 func impactedNodes(g *graph.Graph, changedByFunc map[string][]ChangedLineRange) (map[string]bool, map[string]bool) {
@@ -355,7 +349,7 @@ func removedCalls(current, old *graph.Graph) []RemovedCall {
 	return out
 }
 
-func compactLineRanges(_ string, lines []int) []ChangedLineRange {
+func compactLineRanges(lines []int) []ChangedLineRange {
 	if len(lines) == 0 {
 		return nil
 	}

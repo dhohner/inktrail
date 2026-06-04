@@ -5,50 +5,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-
+	"inktrail/internal/app"
 	"inktrail/internal/diff"
 	"inktrail/internal/graph"
-	"inktrail/internal/report"
+	"inktrail/internal/ui"
 )
-
-type analysisMode int
-
-const (
-	modeStaged analysisMode = iota
-	modeCommit
-	modeRange
-)
-
-type modeOption struct {
-	label       string
-	description string
-	placeholder string
-	help        string
-}
-
-var modeOptions = []modeOption{
-	{
-		label:       "Analyze staged files",
-		description: "Review exactly what is staged for your next commit.",
-	},
-	{
-		label:       "Analyze a commit",
-		description: "Inspect one commit against its parent.",
-		placeholder: "HEAD",
-		help:        "commit ref, e.g. 'HEAD' or 'abc1234'",
-	},
-	{
-		label:       "Analyze a commit range",
-		description: "Compare two refs, branches, tags, or SHAs.",
-		placeholder: "main HEAD",
-		help:        "commit range, e.g. 'main HEAD' or 'main..HEAD'",
-	},
-}
 
 var (
 	hasStagedChanges   = diff.HasStagedChanges
@@ -56,26 +18,6 @@ var (
 	inspectDiff        = diff.Inspect
 	buildGraph         = graph.Build
 	buildGitGraph      = graph.BuildGit
-
-	appStyle = lipgloss.NewStyle().
-			Margin(1, 2).
-			Padding(1, 3).
-			Border(lipgloss.DoubleBorder()).
-			BorderForeground(lipgloss.Color("63")).
-			Width(76)
-
-	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205"))
-
-	subtitleStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("248"))
-	subtleStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
-	helpStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).MarginTop(1)
-	errorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
-
-	selectedItemStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("63")).Bold(true).Padding(0, 1).Width(66)
-	itemStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Padding(0, 1).Width(66)
-	descriptionStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245")).PaddingLeft(4)
-	keyStyle          = lipgloss.NewStyle().Foreground(lipgloss.Color("230")).Background(lipgloss.Color("238")).Padding(0, 1)
-	inputBoxStyle     = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("99")).Padding(1, 2).Width(66)
 )
 
 func main() {
@@ -93,9 +35,10 @@ func run(args []string, out io.Writer) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
+
 	commits := flags.Args()
 	if len(commits) == 0 && !*noUI && stdioIsTerminal() {
-		selected, err := promptAnalysis()
+		selected, err := ui.PromptAnalysis()
 		if err != nil {
 			return err
 		}
@@ -118,243 +61,19 @@ func stdioIsTerminal() bool {
 }
 
 func analyze(commits []string, out io.Writer, fallbackToHead bool) error {
-	commits, err := resolveCommits(commits, fallbackToHead)
-	if err != nil {
-		return err
-	}
-	result, err := inspectDiff(diff.Options{Commits: commits})
-	if err != nil {
-		return err
-	}
-	if len(result.Files) == 0 {
-		return report.WriteJSONL(out, report.Report{})
-	}
-
-	current, base, err := buildGraphs(baseRef(commits))
-	if err != nil {
-		return err
-	}
-	return report.WriteJSONL(out, report.BuildWithBase(current, base, result))
-}
-
-func buildGraphs(base string) (*graph.Graph, *graph.Graph, error) {
-	type graphResult struct {
-		graph *graph.Graph
-		err   error
-	}
-
-	currentCh := make(chan graphResult, 1)
-	baseCh := make(chan graphResult, 1)
-	go func() {
-		g, err := buildGraph(".")
-		currentCh <- graphResult{graph: g, err: err}
-	}()
-	go func() {
-		g, err := buildGitGraph(base)
-		baseCh <- graphResult{graph: g, err: err}
-	}()
-
-	current := <-currentCh
-	baseResult := <-baseCh
-	if current.err != nil {
-		return nil, nil, current.err
-	}
-	if baseResult.err != nil {
-		return nil, nil, baseResult.err
-	}
-	return current.graph, baseResult.graph, nil
+	return newApp().Analyze(commits, out, fallbackToHead)
 }
 
 func resolveCommits(commits []string, fallbackToHead bool) ([]string, error) {
-	if len(commits) != 0 || !fallbackToHead {
-		return commits, nil
-	}
-	staged, err := hasStagedChanges()
-	if err != nil {
-		return nil, err
-	}
-	if staged {
-		return commits, nil
-	}
-	unstaged, err := hasUnstagedChanges()
-	if err != nil {
-		return nil, err
-	}
-	if unstaged {
-		return nil, fmt.Errorf("refusing to analyze HEAD fallback with unstaged or untracked changes; stage, commit, stash, or pass an explicit commit/range")
-	}
-	return []string{"HEAD"}, nil
+	return newApp().ResolveCommits(commits, fallbackToHead)
 }
 
-func baseRef(args []string) string {
-	switch len(args) {
-	case 0:
-		return "HEAD"
-	case 1:
-		return args[0] + "^"
-	default:
-		return args[0]
-	}
-}
-
-func promptAnalysis() ([]string, error) {
-	model := newPromptModel()
-	result, err := tea.NewProgram(model).Run()
-	if err != nil {
-		return nil, err
-	}
-	m := result.(promptModel)
-	if m.cancelled {
-		return nil, fmt.Errorf("cancelled")
-	}
-	return m.commits(), nil
-}
-
-type promptModel struct {
-	cursor    int
-	mode      analysisMode
-	input     textinput.Model
-	entering  bool
-	cancelled bool
-	err       string
-}
-
-func newPromptModel() promptModel {
-	input := textinput.New()
-	input.CharLimit = 120
-	input.Width = 50
-	input.Prompt = "➜ "
-	input.PromptStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
-	input.TextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("86")).Bold(true)
-	input.PlaceholderStyle = subtleStyle
-	return promptModel{input: input}
-}
-
-func (m promptModel) Init() tea.Cmd { return nil }
-
-func (m promptModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c", "esc":
-			m.cancelled = true
-			return m, tea.Quit
-		case "enter":
-			if !m.entering {
-				m.mode = analysisMode(m.cursor)
-				if m.mode == modeStaged {
-					return m, tea.Quit
-				}
-				option := modeOptions[m.mode]
-				m.entering = true
-				m.err = ""
-				m.input.Placeholder = option.placeholder
-				m.input.Focus()
-				return m, nil
-			}
-			value := strings.TrimSpace(m.input.Value())
-			if value == "" {
-				m.err = "value required"
-				return m, nil
-			}
-			if m.mode == modeRange && len(parseRange(value)) != 2 {
-				m.err = "enter range as <from> <to> or <from>..<to>"
-				return m, nil
-			}
-			return m, tea.Quit
-		case "up", "k":
-			if !m.entering && m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j":
-			if !m.entering && m.cursor < len(modeOptions)-1 {
-				m.cursor++
-			}
-		case "backspace":
-			if m.entering && m.input.Value() == "" {
-				m.entering = false
-				m.err = ""
-				m.input.Blur()
-				return m, nil
-			}
-		}
-	}
-	if m.entering {
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
-		return m, cmd
-	}
-	return m, nil
-}
-
-func (m promptModel) View() string {
-	if m.entering {
-		return m.inputView()
-	}
-
-	var b strings.Builder
-	b.WriteString(headerView("Choose an analysis target") + "\n\n")
-	for i, option := range modeOptions {
-		if m.cursor == i {
-			b.WriteString(selectedItemStyle.Render("▸ "+option.label) + "\n")
-		} else {
-			b.WriteString(itemStyle.Render("  "+option.label) + "\n")
-		}
-		b.WriteString(descriptionStyle.Render(option.description) + "\n")
-		if i != len(modeOptions)-1 {
-			b.WriteString("\n")
-		}
-	}
-	b.WriteString(helpStyle.Render(keyStyle.Render("↑/↓") + " move  " + keyStyle.Render("j/k") + " move  " + keyStyle.Render("enter") + " select  " + keyStyle.Render("esc") + " quit"))
-	return appStyle.Render(b.String())
-}
-
-func (m promptModel) inputView() string {
-	var b strings.Builder
-	option := modeOptions[m.mode]
-	b.WriteString(headerView(option.label) + "\n\n")
-	b.WriteString(inputBoxStyle.Render(m.input.View()) + "\n")
-	if m.err != "" {
-		b.WriteString("\n" + errorStyle.Render("✕ "+m.err) + "\n")
-	}
-	b.WriteString("\n" + subtleStyle.Render("Hint: "+option.help) + "\n")
-	b.WriteString(helpStyle.Render(keyStyle.Render("enter") + " submit  " + keyStyle.Render("backspace") + " back  " + keyStyle.Render("esc") + " quit"))
-	return appStyle.Render(b.String())
-}
-
-func headerView(subtitle string) string {
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		lipgloss.JoinHorizontal(lipgloss.Center, titleStyle.Render("inktrail"), " ", subtleStyle.Render("code-change cartography")),
-		subtitleStyle.Render(subtitle),
-	)
-}
-
-func (m promptModel) commits() []string {
-	switch m.mode {
-	case modeCommit:
-		return []string{strings.TrimSpace(m.input.Value())}
-	case modeRange:
-		return parseRange(m.input.Value())
-	default:
-		return nil
-	}
-}
-
-func parseRange(raw string) []string {
-	raw = strings.TrimSpace(raw)
-	if strings.Contains(raw, "..") {
-		parts := strings.SplitN(raw, "..", 2)
-		left := strings.TrimSpace(parts[0])
-		right := strings.TrimSpace(parts[1])
-		if left == "" || right == "" {
-			return nil
-		}
-		return []string{left, right}
-	}
-	parts := strings.Fields(raw)
-	if len(parts) != 2 {
-		return nil
-	}
-	return parts
+func newApp() app.App {
+	return app.New(app.Dependencies{
+		HasStagedChanges:   hasStagedChanges,
+		HasUnstagedChanges: hasUnstagedChanges,
+		InspectDiff:        inspectDiff,
+		BuildGraph:         buildGraph,
+		BuildGitGraph:      buildGitGraph,
+	})
 }

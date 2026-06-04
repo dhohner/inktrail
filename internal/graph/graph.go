@@ -39,6 +39,7 @@ type Graph struct {
 	CallSites map[string]map[string]CallSite
 
 	functionsByCallName map[string][]string
+	functionsByPath     map[string][]string
 }
 
 type sourceFile struct {
@@ -137,6 +138,7 @@ func newGraph() *Graph {
 		Callers:             map[string]map[string]bool{},
 		CallSites:           map[string]map[string]CallSite{},
 		functionsByCallName: map[string][]string{},
+		functionsByPath:     map[string][]string{},
 	}
 }
 
@@ -167,6 +169,7 @@ func (g *Graph) addFunctions(fset *token.FileSet, ps parsedSource) {
 
 func (g *Graph) addCalls(fset *token.FileSet, ps parsedSource) {
 	pkg := ps.File.Name.Name
+	imports := importNames(ps.File)
 	for _, decl := range ps.File.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if !ok || fn.Body == nil {
@@ -178,7 +181,7 @@ func (g *Graph) addCalls(fset *token.FileSet, ps parsedSource) {
 			if !ok {
 				return true
 			}
-			to := callName(call.Fun)
+			to := callName(call.Fun, imports)
 			if to == "" {
 				return true
 			}
@@ -193,6 +196,9 @@ func (g *Graph) addCalls(fset *token.FileSet, ps parsedSource) {
 }
 
 func (g *Graph) indexFunction(name string) {
+	fn := g.Functions[name]
+	g.functionsByPath[fn.Path] = append(g.functionsByPath[fn.Path], name)
+
 	seen := map[string]bool{}
 	for _, key := range []string{shortCallableName(name), lastNameSegment(name)} {
 		if key == "" || seen[key] {
@@ -217,6 +223,26 @@ func (g *Graph) CallSite(from, to string) (CallSite, bool) {
 	}
 	call, ok := calls[to]
 	return call, ok
+}
+
+// FunctionsContainingLine returns production functions in path whose range includes lineNo.
+func (g *Graph) FunctionsContainingLine(path string, lineNo int) []Function {
+	var out []Function
+	if g.functionsByPath == nil {
+		for _, fn := range g.Functions {
+			if fn.Path == path && lineNo >= fn.StartLine && lineNo <= fn.EndLine {
+				out = append(out, fn)
+			}
+		}
+		return out
+	}
+	for _, name := range g.functionsByPath[path] {
+		fn := g.Functions[name]
+		if lineNo >= fn.StartLine && lineNo <= fn.EndLine {
+			out = append(out, fn)
+		}
+	}
+	return out
 }
 
 func (g *Graph) addEdge(from, to string, call CallSite) {
@@ -255,7 +281,7 @@ func recvName(expr ast.Expr) string {
 	}
 }
 
-func callName(expr ast.Expr) string {
+func callName(expr ast.Expr, imports map[string]bool) string {
 	switch x := expr.(type) {
 	case *ast.Ident:
 		return x.Name
@@ -263,10 +289,30 @@ func callName(expr ast.Expr) string {
 		if recv := selectorReceiver(x.X); recv != "" {
 			return recv + "." + x.Sel.Name
 		}
+		if ident, ok := x.X.(*ast.Ident); ok && imports[ident.Name] {
+			return ""
+		}
 		return x.Sel.Name
 	default:
 		return ""
 	}
+}
+
+func importNames(file *ast.File) map[string]bool {
+	imports := map[string]bool{}
+	for _, spec := range file.Imports {
+		if spec.Name != nil {
+			if spec.Name.Name != "." && spec.Name.Name != "_" {
+				imports[spec.Name.Name] = true
+			}
+			continue
+		}
+		path := strings.Trim(spec.Path.Value, "\"")
+		if _, name := filepath.Split(path); name != "" {
+			imports[name] = true
+		}
+	}
+	return imports
 }
 
 func selectorReceiver(expr ast.Expr) string {

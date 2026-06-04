@@ -61,6 +61,29 @@ func (s Service) Do() {}
 	}
 }
 
+func TestBuildCallGraphIgnoresImportedSelectorCalls(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "app.go", `package app
+
+import "github.com/charmbracelet/bubbles/textinput"
+
+func New() {}
+
+func Handler() {
+	textinput.New()
+}
+`)
+
+	g, err := Build(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if g.Calls["app.Handler"]["app.New"] {
+		t.Fatalf("imported selector textinput.New was incorrectly resolved to app.New")
+	}
+}
+
 func write(t *testing.T, dir, name, content string) {
 	t.Helper()
 	path := filepath.Join(dir, name)
