@@ -63,6 +63,33 @@ public class Greeter {
 	}
 }
 
+func TestDocumentRootNodeExposesLanguageNeutralTraversal(t *testing.T) {
+	doc, err := Parse(LanguageJava, []byte(`class Greeter {
+    String greet() { return "hi"; }
+}
+`))
+	if err != nil {
+		t.Fatalf("Parse() error = %v", err)
+	}
+	defer doc.Close()
+
+	root := doc.RootNode()
+	if root == nil || root.Kind() != "program" {
+		t.Fatalf("RootNode() = %#v, want Java program node", root)
+	}
+	children := root.NamedChildren()
+	if len(children) != 1 || children[0].Kind() != "class_declaration" {
+		t.Fatalf("RootNode().NamedChildren() = %#v, want class declaration", children)
+	}
+	name := children[0].ChildByFieldName("name")
+	if name == nil || name.Text(doc.Source) != "Greeter" {
+		t.Fatalf("class name node = %#v", name)
+	}
+	if got := children[0].Range(); got.StartLine != 1 || got.EndLine != 3 {
+		t.Fatalf("class range = %+v, want lines 1-3", got)
+	}
+}
+
 func TestUnsupportedLanguagesStayOutsideFoundation(t *testing.T) {
 	if _, ok := LanguageForPath("README.md"); ok {
 		t.Fatal("LanguageForPath() reported markdown as supported")

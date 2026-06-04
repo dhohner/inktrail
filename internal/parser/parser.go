@@ -41,6 +41,12 @@ type Document struct {
 	tree     *sitter.Tree
 }
 
+// Node is a language-neutral view over a Tree-sitter node. It intentionally
+// exposes only stable source shape needed by language analyzers.
+type Node struct {
+	node sitter.Node
+}
+
 // Close releases native resources associated with the parsed tree.
 func (d *Document) Close() {
 	if d == nil || d.tree == nil {
@@ -52,10 +58,19 @@ func (d *Document) Close() {
 
 // RootRange returns the source range covered by the parse tree root node.
 func (d *Document) RootRange() Range {
-	if d == nil || d.tree == nil {
+	root := d.RootNode()
+	if root == nil {
 		return Range{}
 	}
-	return rangeFromSitter(d.tree.RootNode().Range())
+	return root.Range()
+}
+
+// RootNode returns the root syntax node, or nil after Close.
+func (d *Document) RootNode() *Node {
+	if d == nil || d.tree == nil {
+		return nil
+	}
+	return &Node{node: *d.tree.RootNode()}
 }
 
 // HasSyntaxError reports whether Tree-sitter marked the parse with errors.
@@ -111,6 +126,60 @@ func grammarFor(language Language) (*sitter.Language, error) {
 	default:
 		return nil, fmt.Errorf("%w: %s", ErrUnsupportedLanguage, language)
 	}
+}
+
+// Kind returns this node's grammar kind.
+func (n *Node) Kind() string {
+	if n == nil {
+		return ""
+	}
+	return n.node.Kind()
+}
+
+// Range returns this node's stable source range.
+func (n *Node) Range() Range {
+	if n == nil {
+		return Range{}
+	}
+	return rangeFromSitter(n.node.Range())
+}
+
+// Text returns the source bytes covered by this node as UTF-8 text.
+func (n *Node) Text(source []byte) string {
+	if n == nil {
+		return ""
+	}
+	return n.node.Utf8Text(source)
+}
+
+// NamedChildren returns this node's named children in source order.
+func (n *Node) NamedChildren() []Node {
+	if n == nil {
+		return nil
+	}
+	cursor := n.node.Walk()
+	defer cursor.Close()
+	return wrapNodes(n.node.NamedChildren(cursor))
+}
+
+// ChildByFieldName returns this node's child for a grammar field, if any.
+func (n *Node) ChildByFieldName(fieldName string) *Node {
+	if n == nil {
+		return nil
+	}
+	child := n.node.ChildByFieldName(fieldName)
+	if child == nil {
+		return nil
+	}
+	return &Node{node: *child}
+}
+
+func wrapNodes(nodes []sitter.Node) []Node {
+	out := make([]Node, 0, len(nodes))
+	for _, node := range nodes {
+		out = append(out, Node{node: node})
+	}
+	return out
 }
 
 func rangeFromSitter(r sitter.Range) Range {

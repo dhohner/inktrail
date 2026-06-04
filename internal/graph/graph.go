@@ -3,14 +3,12 @@ package graph
 import (
 	"bytes"
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
+	sharedparser "github.com/dhohner/inktrail/internal/parser"
 	"github.com/dhohner/inktrail/internal/source"
 )
 
@@ -49,9 +47,11 @@ type sourceFile struct {
 }
 
 type parsedSource struct {
-	Path   string
-	Source []byte
-	File   *ast.File
+	Path    string
+	Source  []byte
+	Doc     *sharedparser.Document
+	Package string
+	Imports map[string]bool
 }
 
 func Build(root string) (*Graph, error) {
@@ -117,17 +117,18 @@ func loadGitFiles(ref string) ([]sourceFile, error) {
 
 func buildFromSources(files []sourceFile) (*Graph, error) {
 	g := newGraph()
-	fset := token.NewFileSet()
-	parsed, err := parseSources(fset, files)
+	parsed, err := parseSources(files)
 	if err != nil {
 		return nil, err
 	}
 
+	defer closeParsedSources(parsed)
+
 	for _, ps := range parsed {
-		g.addFunctions(fset, ps)
+		g.addFunctions(ps)
 	}
 	for _, ps := range parsed {
-		g.addCalls(fset, ps)
+		g.addCalls(ps)
 	}
 	return g, nil
 }
@@ -143,57 +144,66 @@ func newGraph() *Graph {
 	}
 }
 
-func parseSources(fset *token.FileSet, files []sourceFile) ([]parsedSource, error) {
+func parseSources(files []sourceFile) ([]parsedSource, error) {
 	parsed := make([]parsedSource, 0, len(files))
 	for _, sf := range files {
-		file, err := parser.ParseFile(fset, sf.Path, sf.Source, 0)
+		doc, err := sharedparser.Parse(sharedparser.LanguageGo, sf.Source)
 		if err != nil {
+			closeParsedSources(parsed)
 			return nil, err
 		}
-		parsed = append(parsed, parsedSource{Path: sf.Path, Source: sf.Source, File: file})
+		if doc.HasSyntaxError() {
+			doc.Close()
+			closeParsedSources(parsed)
+			return nil, fmt.Errorf("parse %s: syntax error", sf.Path)
+		}
+		ps := parsedSource{Path: sf.Path, Source: sf.Source, Doc: doc, Imports: map[string]bool{}}
+		ps.Package = packageName(doc.RootNode(), sf.Source)
+		ps.Imports = importNames(doc.RootNode(), sf.Source)
+		parsed = append(parsed, ps)
 	}
 	return parsed, nil
 }
 
-func (g *Graph) addFunctions(fset *token.FileSet, ps parsedSource) {
-	pkg := ps.File.Name.Name
-	for _, decl := range ps.File.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Body == nil {
+func closeParsedSources(parsed []parsedSource) {
+	for _, ps := range parsed {
+		ps.Doc.Close()
+	}
+}
+
+func (g *Graph) addFunctions(ps parsedSource) {
+	for _, fn := range functionDeclarations(ps.Doc.RootNode()) {
+		body := fn.ChildByFieldName("body")
+		if body == nil {
 			continue
 		}
-		name := functionName(pkg, fn)
-		start := fset.Position(fn.Pos())
-		end := fset.Position(fn.End())
-		g.Functions[name] = Function{Name: name, Path: ps.Path, StartLine: start.Line, EndLine: end.Line, Source: nodeSource(ps.Source, start.Offset, end.Offset)}
+		name := functionName(ps.Package, &fn, ps.Source)
+		r := fn.Range()
+		g.Functions[name] = Function{Name: name, Path: ps.Path, StartLine: r.StartLine, EndLine: r.EndLine, Source: nodeSource(ps.Source, int(r.StartByte), int(r.EndByte))}
 		g.indexFunction(name)
 	}
 }
 
-func (g *Graph) addCalls(fset *token.FileSet, ps parsedSource) {
-	pkg := ps.File.Name.Name
-	imports := importNames(ps.File)
-	for _, decl := range ps.File.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Body == nil {
+func (g *Graph) addCalls(ps parsedSource) {
+	for _, fn := range functionDeclarations(ps.Doc.RootNode()) {
+		body := fn.ChildByFieldName("body")
+		if body == nil {
 			continue
 		}
-		from := functionName(pkg, fn)
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
+		from := functionName(ps.Package, &fn, ps.Source)
+		walk(body, func(n *sharedparser.Node) {
+			if n.Kind() != "call_expression" {
+				return
 			}
-			to := callName(call.Fun, imports)
+			to := callName(n.ChildByFieldName("function"), ps.Imports, ps.Source)
 			if to == "" {
-				return true
+				return
 			}
-			pos := fset.Position(call.Pos())
-			site := CallSite{Path: ps.Path, LineNo: pos.Line, Code: sourceLine(ps.Source, pos.Line)}
-			for _, candidate := range g.resolveCalls(pkg, to) {
+			r := n.Range()
+			site := CallSite{Path: ps.Path, LineNo: r.StartLine, Code: sourceLine(ps.Source, r.StartLine)}
+			for _, candidate := range g.resolveCalls(ps.Package, to) {
 				g.addEdge(from, candidate, site)
 			}
-			return true
 		})
 	}
 }
@@ -266,80 +276,169 @@ func (g *Graph) addEdge(from, to string, call CallSite) {
 	g.CallSites[from][to] = call
 }
 
-func functionName(pkg string, fn *ast.FuncDecl) string {
-	if fn.Recv == nil || len(fn.Recv.List) == 0 {
-		return pkg + "." + fn.Name.Name
+func packageName(root *sharedparser.Node, source []byte) string {
+	for _, child := range root.NamedChildren() {
+		if child.Kind() != "package_clause" {
+			continue
+		}
+		for _, pkgChild := range child.NamedChildren() {
+			if pkgChild.Kind() == "package_identifier" {
+				return pkgChild.Text(source)
+			}
+		}
 	}
-	return pkg + "." + recvName(fn.Recv.List[0].Type) + "." + fn.Name.Name
+	return "unknown"
 }
 
-func recvName(expr ast.Expr) string {
-	switch x := expr.(type) {
-	case *ast.Ident:
-		return x.Name
-	case *ast.StarExpr:
-		return recvName(x.X)
-	default:
+func functionDeclarations(root *sharedparser.Node) []sharedparser.Node {
+	var out []sharedparser.Node
+	for _, child := range root.NamedChildren() {
+		switch child.Kind() {
+		case "function_declaration", "method_declaration":
+			out = append(out, child)
+		}
+	}
+	return out
+}
+
+func functionName(pkg string, fn *sharedparser.Node, source []byte) string {
+	name := "unknown"
+	if nameNode := fn.ChildByFieldName("name"); nameNode != nil {
+		name = nameNode.Text(source)
+	}
+	if fn.Kind() != "method_declaration" {
+		return pkg + "." + name
+	}
+	return pkg + "." + recvName(fn.ChildByFieldName("receiver"), source) + "." + name
+}
+
+func recvName(receiver *sharedparser.Node, source []byte) string {
+	if receiver == nil {
 		return "unknown"
 	}
+	var found string
+	walk(receiver, func(n *sharedparser.Node) {
+		if found != "" {
+			return
+		}
+		switch n.Kind() {
+		case "type_identifier", "qualified_type":
+			found = lastSelectorPart(n.Text(source))
+		}
+	})
+	if found == "" {
+		return "unknown"
+	}
+	return found
 }
 
-func callName(expr ast.Expr, imports map[string]bool) string {
-	switch x := expr.(type) {
-	case *ast.Ident:
-		return x.Name
-	case *ast.SelectorExpr:
-		if recv := selectorReceiver(x.X); recv != "" {
-			return recv + "." + x.Sel.Name
-		}
-		if ident, ok := x.X.(*ast.Ident); ok && imports[ident.Name] {
+func callName(expr *sharedparser.Node, imports map[string]bool, source []byte) string {
+	if expr == nil {
+		return ""
+	}
+	switch expr.Kind() {
+	case "identifier":
+		return expr.Text(source)
+	case "selector_expression":
+		field := expr.ChildByFieldName("field")
+		if field == nil {
 			return ""
 		}
-		return x.Sel.Name
+		operand := expr.ChildByFieldName("operand")
+		if recv := selectorReceiver(operand, source); recv != "" {
+			return recv + "." + field.Text(source)
+		}
+		if operand != nil && operand.Kind() == "identifier" && imports[operand.Text(source)] {
+			return ""
+		}
+		return field.Text(source)
 	default:
 		return ""
 	}
 }
 
-func importNames(file *ast.File) map[string]bool {
+func importNames(root *sharedparser.Node, source []byte) map[string]bool {
 	imports := map[string]bool{}
-	for _, spec := range file.Imports {
-		if spec.Name != nil {
-			if spec.Name.Name != "." && spec.Name.Name != "_" {
-				imports[spec.Name.Name] = true
+	walk(root, func(n *sharedparser.Node) {
+		if n.Kind() != "import_spec" {
+			return
+		}
+		children := n.NamedChildren()
+		if len(children) == 0 {
+			return
+		}
+		if children[0].Kind() == "package_identifier" {
+			name := children[0].Text(source)
+			if name != "." && name != "_" {
+				imports[name] = true
 			}
-			continue
+			return
 		}
-		path := strings.Trim(spec.Path.Value, "\"")
-		if _, name := filepath.Split(path); name != "" {
-			imports[name] = true
+		for _, child := range children {
+			if child.Kind() == "interpreted_string_literal" || child.Kind() == "raw_string_literal" {
+				path := strings.Trim(child.Text(source), "\"`")
+				if _, name := filepath.Split(path); name != "" {
+					imports[name] = true
+				}
+			}
 		}
-	}
+	})
 	return imports
 }
 
-func selectorReceiver(expr ast.Expr) string {
-	switch x := expr.(type) {
-	case *ast.CompositeLit:
-		return typeName(x.Type)
-	case *ast.UnaryExpr:
-		if x.Op == token.AND {
-			return selectorReceiver(x.X)
+func selectorReceiver(expr *sharedparser.Node, source []byte) string {
+	if expr == nil {
+		return ""
+	}
+	switch expr.Kind() {
+	case "composite_literal":
+		return typeName(expr.ChildByFieldName("type"), source)
+	case "unary_expression", "parenthesized_expression":
+		for _, child := range expr.NamedChildren() {
+			c := child
+			if recv := selectorReceiver(&c, source); recv != "" {
+				return recv
+			}
 		}
 	}
 	return ""
 }
 
-func typeName(expr ast.Expr) string {
-	switch x := expr.(type) {
-	case *ast.Ident:
-		return x.Name
-	case *ast.SelectorExpr:
-		return x.Sel.Name
-	case *ast.StarExpr:
-		return typeName(x.X)
+func typeName(expr *sharedparser.Node, source []byte) string {
+	if expr == nil {
+		return ""
+	}
+	switch expr.Kind() {
+	case "type_identifier", "identifier", "field_identifier":
+		return expr.Text(source)
+	case "qualified_type", "selector_expression":
+		return lastSelectorPart(expr.Text(source))
+	case "pointer_type":
+		for _, child := range expr.NamedChildren() {
+			c := child
+			if name := typeName(&c, source); name != "" {
+				return name
+			}
+		}
 	}
 	return ""
+}
+
+func walk(root *sharedparser.Node, visit func(*sharedparser.Node)) {
+	if root == nil {
+		return
+	}
+	visit(root)
+	for _, child := range root.NamedChildren() {
+		c := child
+		walk(&c, visit)
+	}
+}
+
+func lastSelectorPart(text string) string {
+	text = strings.TrimPrefix(text, "*")
+	parts := strings.Split(text, ".")
+	return parts[len(parts)-1]
 }
 
 func sourceLine(source []byte, lineNo int) string {
