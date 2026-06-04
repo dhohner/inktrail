@@ -160,6 +160,153 @@ func (b B) Gone() {}
 	}
 }
 
+func TestBuildWithBaseRepresentsMovedSymbolsAsMoves(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "new.go", `package app
+
+func F() {}
+`)
+	current, err := graph.Build(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldDir := t.TempDir()
+	write(t, oldDir, "old.go", `package app
+
+func F() {}
+`)
+	old, err := graph.Build(oldDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := BuildWithBase(current, old, diff.Result{
+		Lines: []diff.Line{{Path: "new.go", LineNo: 3}},
+		Files: []diff.FileChange{{Status: "added", Path: "new.go", Hunks: []diff.Hunk{{NewStart: 1, NewLines: 3, Lines: []diff.HunkLine{
+			{Op: "add", NewLine: 1, Content: "package app"},
+			{Op: "add", NewLine: 3, Content: "func F() {}"},
+		}}}}},
+	})
+
+	wantMoves := []MovedSymbol{{From: "old.go::app.F", To: "new.go::app.F"}}
+	if !reflect.DeepEqual(r.MovedSymbols, wantMoves) {
+		t.Fatalf("moved_symbols=%#v want=%#v", r.MovedSymbols, wantMoves)
+	}
+	if len(r.DeletedSymbols) != 0 || len(r.ChangedSymbols) != 0 || len(r.Nodes) != 0 {
+		t.Fatalf("deleted_symbols=%#v changed_symbols=%#v nodes=%#v", r.DeletedSymbols, r.ChangedSymbols, r.Nodes)
+	}
+	if len(r.Files) != 1 || len(r.Files[0].Hunks) != 1 || len(r.Files[0].Hunks[0].Lines) != 1 || r.Files[0].Hunks[0].Lines[0].NewLine != 1 {
+		t.Fatalf("files=%#v", r.Files)
+	}
+	if r.Summary.MovedSymbols != 1 || r.Summary.DeletedSymbols != 0 || r.Summary.ChangedSymbols != 0 {
+		t.Fatalf("summary=%#v", r.Summary)
+	}
+}
+
+func TestBuildWithBaseDoesNotTreatModifiedMovesAsMoved(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "new.go", `package app
+
+func F() { println("new") }
+`)
+	current, err := graph.Build(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldDir := t.TempDir()
+	write(t, oldDir, "old.go", `package app
+
+func F() { println("old") }
+`)
+	old, err := graph.Build(oldDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := BuildWithBase(current, old, diff.Result{Lines: []diff.Line{{Path: "new.go", LineNo: 3}}})
+
+	if len(r.MovedSymbols) != 0 {
+		t.Fatalf("moved_symbols=%#v", r.MovedSymbols)
+	}
+	if !reflect.DeepEqual(r.ChangedSymbols, []string{"new.go::app.F"}) {
+		t.Fatalf("changed_symbols=%#v", r.ChangedSymbols)
+	}
+	if !reflect.DeepEqual(r.DeletedSymbols, []string{"old.go::app.F"}) {
+		t.Fatalf("deleted_symbols=%#v", r.DeletedSymbols)
+	}
+}
+
+func TestBuildWithBaseDoesNotReportRemovedCallsForMovedSymbols(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "new.go", `package app
+
+func F() { G() }
+func G() {}
+`)
+	current, err := graph.Build(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldDir := t.TempDir()
+	write(t, oldDir, "old.go", `package app
+
+func F() { G() }
+func G() {}
+`)
+	old, err := graph.Build(oldDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := BuildWithBase(current, old, diff.Result{})
+
+	if len(r.MovedSymbols) != 2 {
+		t.Fatalf("moved_symbols=%#v", r.MovedSymbols)
+	}
+	if len(r.RemovedCalls) != 0 {
+		t.Fatalf("removed_calls=%#v", r.RemovedCalls)
+	}
+}
+
+func TestBuildWithBaseDropsFilesWhoseHunksOnlyContainMovedLines(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "new.go", `package app
+
+func F() {}
+`)
+	current, err := graph.Build(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldDir := t.TempDir()
+	write(t, oldDir, "old.go", `package app
+
+func F() {}
+`)
+	old, err := graph.Build(oldDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := BuildWithBase(current, old, diff.Result{
+		Lines: []diff.Line{{Path: "new.go", LineNo: 3}},
+		Files: []diff.FileChange{{Status: "modified", Path: "new.go", Hunks: []diff.Hunk{{NewStart: 3, NewLines: 1, Lines: []diff.HunkLine{
+			{Op: "add", NewLine: 3, Content: "func F() {}"},
+		}}}}},
+	})
+
+	if len(r.MovedSymbols) != 1 {
+		t.Fatalf("moved_symbols=%#v", r.MovedSymbols)
+	}
+	if len(r.Files) != 0 || r.Summary.Files != 0 {
+		t.Fatalf("files=%#v summary=%#v", r.Files, r.Summary)
+	}
+}
+
 func TestWriteJSONWritesIndentedReport(t *testing.T) {
 	r := Report{ChangedSymbols: []string{"app.go::app.F"}}
 	var buf bytes.Buffer
@@ -188,7 +335,7 @@ func TestWriteJSONLWritesOneRecordPerLine(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := "{\"type\":\"summary\",\"files\":1,\"test_files\":0,\"changed_symbols\":1,\"deleted_symbols\":0,\"removed_calls\":0,\"entry_points\":0,\"nodes\":1}\n" +
+	want := "{\"type\":\"summary\",\"files\":1,\"test_files\":0,\"changed_symbols\":1,\"deleted_symbols\":0,\"moved_symbols\":0,\"removed_calls\":0,\"entry_points\":0,\"nodes\":1}\n" +
 		"{\"type\":\"file\",\"status\":\"modified\",\"path\":\"app.go\",\"test\":false,\"hunks\":[{\"old_start\":4,\"old_lines\":1,\"new_start\":4,\"new_lines\":1,\"lines\":[{\"op\":\"add\",\"new_line\":4,\"content\":\"if a < b && c > d {\"}]}]}\n" +
 		"{\"type\":\"changed_symbol\",\"id\":\"app.go::app.F\"}\n" +
 		"{\"type\":\"node\",\"id\":\"app.go::app.F\",\"path\":\"app.go\",\"name\":\"F\",\"kind\":\"function\",\"start_line\":3,\"end_line\":5,\"changed\":true,\"changed_lines\":[{\"start\":4,\"end\":4}],\"package\":\"app\"}\n"

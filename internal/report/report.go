@@ -50,11 +50,17 @@ type RemovedCall struct {
 	CallSite CallSite `json:"call_site"`
 }
 
+type MovedSymbol struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
 type Summary struct {
 	Files          int `json:"files"`
 	TestFiles      int `json:"test_files"`
 	ChangedSymbols int `json:"changed_symbols"`
 	DeletedSymbols int `json:"deleted_symbols"`
+	MovedSymbols   int `json:"moved_symbols"`
 	RemovedCalls   int `json:"removed_calls"`
 	EntryPoints    int `json:"entry_points"`
 	Nodes          int `json:"nodes"`
@@ -65,6 +71,7 @@ type Report struct {
 	Files          []diff.FileChange `json:"files"`
 	ChangedSymbols []string          `json:"changed_symbols"`
 	DeletedSymbols []string          `json:"deleted_symbols"`
+	MovedSymbols   []MovedSymbol     `json:"moved_symbols"`
 	RemovedCalls   []RemovedCall     `json:"removed_calls"`
 	EntryPoints    []string          `json:"entry_points"`
 	Nodes          []Node            `json:"nodes"`
@@ -75,20 +82,26 @@ func Build(g *graph.Graph, result diff.Result) Report {
 }
 
 func BuildWithBase(g, old *graph.Graph, result diff.Result) Report {
+	movedSymbols := movedSymbols(g, old)
+	currentMovedRanges, oldMovedRanges := movedFunctionRanges(g, old, movedSymbols)
+	result.Lines = filterMovedLines(result.Lines, currentMovedRanges)
+	result.Files = filterMovedHunkLines(result.Files, currentMovedRanges, oldMovedRanges)
+
 	changedByFunc := changedLineRangesByFunction(g, result.Lines)
 	nodeNames, entryPoints := impactedNodes(g, changedByFunc)
 	nodes := buildNodes(g, nodeNames, changedByFunc)
 
-	changedSymbols := keysAsSymbolIDs(g, changedByFunc)
+	changedSymbols := keysAsSymbolIDsExcluding(g, changedByFunc, movedCurrentNames(movedSymbols))
 	entryPointIDs := sortedKeys(entryPoints)
-	deletedSymbols := deletedSymbols(g, old)
-	removedCalls := removedCalls(g, old)
+	deletedSymbols := deletedSymbols(g, old, movedOldIDs(movedSymbols))
+	removedCalls := removedCalls(g, old, movedSymbolMap(movedSymbols))
 	return Report{
 		Summary: Summary{
 			Files:          len(result.Files),
 			TestFiles:      countTestFiles(result.Files),
 			ChangedSymbols: len(changedSymbols),
 			DeletedSymbols: len(deletedSymbols),
+			MovedSymbols:   len(movedSymbols),
 			RemovedCalls:   len(removedCalls),
 			EntryPoints:    len(entryPointIDs),
 			Nodes:          len(nodes),
@@ -96,6 +109,7 @@ func BuildWithBase(g, old *graph.Graph, result diff.Result) Report {
 		Files:          result.Files,
 		ChangedSymbols: changedSymbols,
 		DeletedSymbols: deletedSymbols,
+		MovedSymbols:   movedSymbols,
 		RemovedCalls:   removedCalls,
 		EntryPoints:    entryPointIDs,
 		Nodes:          nodes,
@@ -229,6 +243,14 @@ func WriteJSONL(w io.Writer, r Report) error {
 			return err
 		}
 	}
+	for _, move := range r.MovedSymbols {
+		if err := enc.Encode(struct {
+			Type string `json:"type"`
+			MovedSymbol
+		}{Type: "moved_symbol", MovedSymbol: move}); err != nil {
+			return err
+		}
+	}
 	for _, call := range r.RemovedCalls {
 		if err := enc.Encode(struct {
 			Type string `json:"type"`
@@ -283,7 +305,7 @@ func relevantCalls(g *graph.Graph, name string, relevant map[string]bool) []Outg
 	return out
 }
 
-func deletedSymbols(current, old *graph.Graph) []string {
+func deletedSymbols(current, old *graph.Graph, movedOldIDs map[string]bool) []string {
 	if old == nil {
 		return nil
 	}
@@ -294,7 +316,7 @@ func deletedSymbols(current, old *graph.Graph) []string {
 	}
 	for _, fn := range old.Functions {
 		id := symbolID(fn)
-		if !currentIDs[id] {
+		if !currentIDs[id] && !movedOldIDs[id] {
 			ids = append(ids, id)
 		}
 	}
@@ -302,7 +324,7 @@ func deletedSymbols(current, old *graph.Graph) []string {
 	return ids
 }
 
-func removedCalls(current, old *graph.Graph) []RemovedCall {
+func removedCalls(current, old *graph.Graph, moved map[string]string) []RemovedCall {
 	if old == nil {
 		return nil
 	}
@@ -333,7 +355,7 @@ func removedCalls(current, old *graph.Graph) []RemovedCall {
 			}
 			fromID := symbolID(fromFn)
 			toID := symbolID(toFn)
-			if currentEdges[fromID+"->"+toID] {
+			if currentEdges[remapMovedSymbol(fromID, moved)+"->"+remapMovedSymbol(toID, moved)] {
 				continue
 			}
 			call, _ := old.CallSite(from, to)
@@ -374,12 +396,155 @@ func compactLineRanges(lines []int) []ChangedLineRange {
 }
 
 func keysAsSymbolIDs(g *graph.Graph, values map[string][]ChangedLineRange) []string {
+	return keysAsSymbolIDsExcluding(g, values, nil)
+}
+
+func keysAsSymbolIDsExcluding(g *graph.Graph, values map[string][]ChangedLineRange, exclude map[string]bool) []string {
 	ids := make([]string, 0, len(values))
 	for name := range values {
+		if exclude[name] {
+			continue
+		}
 		ids = append(ids, symbolID(g.Functions[name]))
 	}
 	sort.Strings(ids)
 	return ids
+}
+
+func movedSymbols(current, old *graph.Graph) []MovedSymbol {
+	if old == nil {
+		return nil
+	}
+	var out []MovedSymbol
+	for name, oldFn := range old.Functions {
+		currentFn, ok := current.Functions[name]
+		if !ok || oldFn.Path == currentFn.Path || oldFn.Source != currentFn.Source {
+			continue
+		}
+		out = append(out, MovedSymbol{From: symbolID(oldFn), To: symbolID(currentFn)})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].From == out[j].From {
+			return out[i].To < out[j].To
+		}
+		return out[i].From < out[j].From
+	})
+	return out
+}
+
+func movedCurrentNames(moves []MovedSymbol) map[string]bool {
+	out := map[string]bool{}
+	for _, move := range moves {
+		_, name, ok := strings.Cut(move.To, "::")
+		if ok {
+			out[name] = true
+		}
+	}
+	return out
+}
+
+func movedOldIDs(moves []MovedSymbol) map[string]bool {
+	out := map[string]bool{}
+	for _, move := range moves {
+		out[move.From] = true
+	}
+	return out
+}
+
+func movedSymbolMap(moves []MovedSymbol) map[string]string {
+	out := map[string]string{}
+	for _, move := range moves {
+		out[move.From] = move.To
+	}
+	return out
+}
+
+func remapMovedSymbol(id string, moves map[string]string) string {
+	if to, ok := moves[id]; ok {
+		return to
+	}
+	return id
+}
+
+func movedFunctionRanges(current, old *graph.Graph, moves []MovedSymbol) (map[string][]LineRange, map[string][]LineRange) {
+	currentRanges := map[string][]LineRange{}
+	oldRanges := map[string][]LineRange{}
+	if old == nil {
+		return currentRanges, oldRanges
+	}
+	for _, move := range moves {
+		_, currentName, ok := strings.Cut(move.To, "::")
+		if ok {
+			if fn, exists := current.Functions[currentName]; exists {
+				currentRanges[fn.Path] = append(currentRanges[fn.Path], LineRange{Start: fn.StartLine, End: fn.EndLine})
+			}
+		}
+		_, oldName, ok := strings.Cut(move.From, "::")
+		if ok {
+			if fn, exists := old.Functions[oldName]; exists {
+				oldRanges[fn.Path] = append(oldRanges[fn.Path], LineRange{Start: fn.StartLine, End: fn.EndLine})
+			}
+		}
+	}
+	return currentRanges, oldRanges
+}
+
+func filterMovedLines(lines []diff.Line, movedRanges map[string][]LineRange) []diff.Line {
+	if len(movedRanges) == 0 {
+		return lines
+	}
+	out := make([]diff.Line, 0, len(lines))
+	for _, line := range lines {
+		if inRanges(line.LineNo, movedRanges[line.Path]) {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+func filterMovedHunkLines(files []diff.FileChange, currentMovedRanges, oldMovedRanges map[string][]LineRange) []diff.FileChange {
+	if len(currentMovedRanges) == 0 && len(oldMovedRanges) == 0 {
+		return files
+	}
+	out := make([]diff.FileChange, 0, len(files))
+	for _, file := range files {
+		filteredFile := file
+		filteredFile.Hunks = make([]diff.Hunk, 0, len(file.Hunks))
+		oldPath := file.OldPath
+		if oldPath == "" {
+			oldPath = file.Path
+		}
+		for _, hunk := range file.Hunks {
+			filteredHunk := hunk
+			filteredHunk.Lines = make([]diff.HunkLine, 0, len(hunk.Lines))
+			for _, line := range hunk.Lines {
+				if line.Op == "add" && inRanges(line.NewLine, currentMovedRanges[file.Path]) {
+					continue
+				}
+				if line.Op == "del" && inRanges(line.OldLine, oldMovedRanges[oldPath]) {
+					continue
+				}
+				filteredHunk.Lines = append(filteredHunk.Lines, line)
+			}
+			if len(hunk.Lines) == 0 || len(filteredHunk.Lines) > 0 {
+				filteredFile.Hunks = append(filteredFile.Hunks, filteredHunk)
+			}
+		}
+		if len(file.Hunks) == 0 || len(filteredFile.Hunks) > 0 {
+			out = append(out, filteredFile)
+		}
+	}
+	return out
+}
+
+func inRanges(lineNo int, ranges []LineRange) bool {
+	for _, r := range ranges {
+		if lineNo >= r.Start && lineNo <= r.End {
+			return true
+		}
+	}
+	return false
 }
 
 func countTestFiles(files []diff.FileChange) int {

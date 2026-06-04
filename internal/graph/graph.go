@@ -24,6 +24,7 @@ type Function struct {
 	Path      string
 	StartLine int
 	EndLine   int
+	Source    string
 }
 
 type CallSite struct {
@@ -162,7 +163,9 @@ func (g *Graph) addFunctions(fset *token.FileSet, ps parsedSource) {
 			continue
 		}
 		name := functionName(pkg, fn)
-		g.Functions[name] = Function{Name: name, Path: ps.Path, StartLine: fset.Position(fn.Pos()).Line, EndLine: fset.Position(fn.End()).Line}
+		start := fset.Position(fn.Pos())
+		end := fset.Position(fn.End())
+		g.Functions[name] = Function{Name: name, Path: ps.Path, StartLine: start.Line, EndLine: end.Line, Source: nodeSource(ps.Source, start.Offset, end.Offset)}
 		g.indexFunction(name)
 	}
 }
@@ -345,6 +348,16 @@ func sourceLine(source []byte, lineNo int) string {
 		return ""
 	}
 	return strings.TrimSpace(lines[lineNo-1])
+}
+
+func nodeSource(source []byte, start, end int) string {
+	if start < 0 || end < start || start > len(source) {
+		return ""
+	}
+	if end > len(source) {
+		end = len(source)
+	}
+	return string(source[start:end])
 }
 
 func clean(root, path string) string {
