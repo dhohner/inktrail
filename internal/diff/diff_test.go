@@ -130,6 +130,45 @@ func TestParseDiffIgnoresTestDirs(t *testing.T) {
 	}
 }
 
+func TestParseJavaMavenGradleScopes(t *testing.T) {
+	diff := []byte(`diff --git a/src/main/java/com/acme/App.java b/src/main/java/com/acme/App.java
+--- a/src/main/java/com/acme/App.java
++++ b/src/main/java/com/acme/App.java
+@@ -1,0 +2 @@ class App {
++void run() {}
+diff --git a/service/src/test/java/com/acme/AppTest.java b/service/src/test/java/com/acme/AppTest.java
+--- a/service/src/test/java/com/acme/AppTest.java
++++ b/service/src/test/java/com/acme/AppTest.java
+@@ -1,0 +2 @@ class AppTest {
++void testRun() {}
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1,0 +1 @@
++# docs
+`)
+
+	lines, err := ParseDiff(diff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantLines := []Line{{Path: "src/main/java/com/acme/App.java", LineNo: 2, Content: "void run() {}"}, {Path: "README.md", LineNo: 1, Content: "# docs"}}
+	if !reflect.DeepEqual(lines, wantLines) {
+		t.Fatalf("lines=%#v want=%#v", lines, wantLines)
+	}
+
+	files, err := ParseFiles(diff)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 3 {
+		t.Fatalf("files=%#v", files)
+	}
+	if files[0].Test || !files[1].Test || files[2].Test {
+		t.Fatalf("test scopes=%v,%v,%v", files[0].Test, files[1].Test, files[2].Test)
+	}
+}
+
 func TestParseDiffIgnoresDeletedFiles(t *testing.T) {
 	diff := []byte(`diff --git a/dead.go b/dead.go
 deleted file mode 100644

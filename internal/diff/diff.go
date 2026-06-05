@@ -317,5 +317,5 @@ func cleanDiffPath(path string) string {
 }
 
 func isTestPath(path string) bool {
-	return source.IsGoTestPath(path)
+	return source.IsTestPath(path)
 }
