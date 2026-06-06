@@ -156,6 +156,97 @@ func (b B) Gone() {}
 	}
 }
 
+func TestBuildWithBaseIncludesDeletedJavaSymbolsAndRemovedJavaCalls(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "src/main/java/com/acme/App.java", `package com.acme;
+class A {
+  void run() { }
+}
+class B {
+  void kept() { }
+}
+`)
+	current, err := graph.Build(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldDir := t.TempDir()
+	write(t, oldDir, "src/main/java/com/acme/App.java", `package com.acme;
+class A {
+  void run() { new B().gone(); }
+}
+class B {
+  void kept() { }
+  void gone() { }
+}
+`)
+	old, err := graph.Build(oldDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := BuildWithBase(current, old, diff.Result{})
+
+	if !reflect.DeepEqual(r.DeletedSymbols, []string{"src/main/java/com/acme/App.java::com.acme.B.gone"}) {
+		t.Fatalf("deleted_symbols=%#v", r.DeletedSymbols)
+	}
+	if len(r.RemovedCalls) != 1 {
+		t.Fatalf("removed_calls=%#v", r.RemovedCalls)
+	}
+	if r.RemovedCalls[0].From != "src/main/java/com/acme/App.java::com.acme.A.run" || r.RemovedCalls[0].To != "src/main/java/com/acme/App.java::com.acme.B.gone" {
+		t.Fatalf("removed_call=%#v", r.RemovedCalls[0])
+	}
+	if r.RemovedCalls[0].CallSite.Path != "src/main/java/com/acme/App.java" || r.RemovedCalls[0].CallSite.Line != 3 {
+		t.Fatalf("call_site=%#v", r.RemovedCalls[0].CallSite)
+	}
+	if r.Summary.DeletedSymbols != 1 || r.Summary.RemovedCalls != 1 {
+		t.Fatalf("summary=%#v", r.Summary)
+	}
+}
+
+func TestBuildWithBaseDoesNotReportDeletedJavaSymbolsOrRemovedJavaCallsForMoves(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "src/main/java/com/acme/NewApp.java", `package com.acme;
+class A {
+  void run() { new B().kept(); }
+}
+class B {
+  void kept() { }
+}
+`)
+	current, err := graph.Build(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldDir := t.TempDir()
+	write(t, oldDir, "src/main/java/com/acme/OldApp.java", `package com.acme;
+class A {
+  void run() { new B().kept(); }
+}
+class B {
+  void kept() { }
+}
+`)
+	old, err := graph.Build(oldDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := BuildWithBase(current, old, diff.Result{})
+
+	if len(r.MovedSymbols) != 4 {
+		t.Fatalf("moved_symbols=%#v", r.MovedSymbols)
+	}
+	if len(r.DeletedSymbols) != 0 {
+		t.Fatalf("deleted_symbols=%#v", r.DeletedSymbols)
+	}
+	if len(r.RemovedCalls) != 0 {
+		t.Fatalf("removed_calls=%#v", r.RemovedCalls)
+	}
+}
+
 func TestBuildWithBaseRepresentsMovedSymbolsAsMoves(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "new.go", `package app
