@@ -16,12 +16,33 @@ import (
 // Language identifies a source language with a bundled Tree-sitter grammar.
 type Language string
 
+type languageSpec struct {
+	Language   Language
+	Extensions []string
+	Grammar    func() *sitter.Language
+}
+
 const (
 	LanguageGo   Language = "go"
 	LanguageJava Language = "java"
 )
 
-var ErrUnsupportedLanguage = errors.New("unsupported parser language")
+var (
+	ErrUnsupportedLanguage = errors.New("unsupported parser language")
+
+	languageSpecs = []languageSpec{
+		{
+			Language:   LanguageGo,
+			Extensions: []string{".go"},
+			Grammar:    func() *sitter.Language { return sitter.NewLanguage(treesittergo.Language()) },
+		},
+		{
+			Language:   LanguageJava,
+			Extensions: []string{".java"},
+			Grammar:    func() *sitter.Language { return sitter.NewLanguage(treesitterjava.Language()) },
+		},
+	}
+)
 
 // Range is a stable source range using 1-based line numbers and byte offsets.
 // EndLine is inclusive for non-empty ranges and equals StartLine for single-line
@@ -85,14 +106,15 @@ func (r Range) ContainsLine(line int) bool {
 
 // LanguageForPath returns the supported parser language for path, if any.
 func LanguageForPath(path string) (Language, bool) {
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".go":
-		return LanguageGo, true
-	case ".java":
-		return LanguageJava, true
-	default:
-		return "", false
+	ext := strings.ToLower(filepath.Ext(path))
+	for _, spec := range languageSpecs {
+		for _, candidate := range spec.Extensions {
+			if ext == candidate {
+				return spec.Language, true
+			}
+		}
 	}
+	return "", false
 }
 
 // Parse parses source with the requested supported language. The parser is
@@ -118,14 +140,12 @@ func Parse(language Language, source []byte) (*Document, error) {
 }
 
 func grammarFor(language Language) (*sitter.Language, error) {
-	switch language {
-	case LanguageGo:
-		return sitter.NewLanguage(treesittergo.Language()), nil
-	case LanguageJava:
-		return sitter.NewLanguage(treesitterjava.Language()), nil
-	default:
-		return nil, fmt.Errorf("%w: %s", ErrUnsupportedLanguage, language)
+	for _, spec := range languageSpecs {
+		if spec.Language == language {
+			return spec.Grammar(), nil
+		}
 	}
+	return nil, fmt.Errorf("%w: %s", ErrUnsupportedLanguage, language)
 }
 
 // Kind returns this node's grammar kind.
