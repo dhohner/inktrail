@@ -94,8 +94,96 @@ func (Analyzer) Symbols(src analyzer.Source) []analyzer.Symbol {
 	return out
 }
 
-func (Analyzer) Calls(analyzer.Source) []analyzer.Call {
-	return nil
+func (Analyzer) Calls(src analyzer.Source) []analyzer.Call {
+	var out []analyzer.Call
+	var walk func(*parser.Node, []string, string)
+	walk = func(n *parser.Node, owners []string, from string) {
+		if n == nil {
+			return
+		}
+		switch n.Kind() {
+		case "class_declaration", "interface_declaration", "enum_declaration", "record_declaration":
+			name := javaName(n, src.Source)
+			if name == "" {
+				return
+			}
+			nextOwners := append(append([]string{}, owners...), name)
+			for _, child := range n.NamedChildren() {
+				c := child
+				walk(&c, nextOwners, from)
+			}
+			return
+		case "method_declaration", "constructor_declaration", "compact_constructor_declaration":
+			name := javaName(n, src.Source)
+			if n.Kind() != "method_declaration" {
+				name = "<init>"
+			}
+			if name != "" && len(owners) > 0 {
+				from = javaQualifiedName(src.Package, append(append([]string{}, owners...), name))
+			}
+		case "lambda_expression":
+			if len(owners) > 0 {
+				r := n.Range()
+				from = javaQualifiedName(src.Package, append(append([]string{}, owners...), fmt.Sprintf("lambda@%d", r.StartLine)))
+			}
+		case "method_invocation":
+			if from != "" {
+				if to := javaCallTarget(n, src.Source, owners); to != "" {
+					r := n.Range()
+					out = append(out, analyzer.Call{From: from, To: to, Site: analyzer.CallSite{Path: src.Path, LineNo: r.StartLine, Code: strings.TrimSpace(n.Text(src.Source))}})
+				}
+			}
+		}
+		for _, child := range n.NamedChildren() {
+			c := child
+			walk(&c, owners, from)
+		}
+	}
+	walk(src.Doc.RootNode(), nil, "")
+	return out
+}
+
+func javaCallTarget(n *parser.Node, source []byte, owners []string) string {
+	children := n.NamedChildren()
+	var ids []string
+	for _, child := range children {
+		switch child.Kind() {
+		case "identifier", "type_identifier", "this", "object_creation_expression":
+			ids = append(ids, child.Text(source))
+		case "field_access":
+			// Chained receivers such as System.out.println are usually external or
+			// dependency calls. Do not emit a local edge unless a later resolver can
+			// prove the receiver is repository-local.
+			return ""
+		}
+	}
+	if len(ids) == 0 {
+		return ""
+	}
+	method := ids[len(ids)-1]
+	if len(ids) == 1 {
+		if len(owners) == 0 {
+			return method
+		}
+		return strings.Join(append([]string{owners[len(owners)-1]}, method), ".")
+	}
+	receiver := ids[0]
+	if receiver == "this" {
+		if len(owners) == 0 {
+			return ""
+		}
+		return strings.Join(append([]string{owners[len(owners)-1]}, method), ".")
+	}
+	if strings.HasPrefix(receiver, "new ") {
+		parts := strings.Fields(receiver)
+		if len(parts) >= 2 {
+			return strings.TrimSuffix(parts[1], "()") + "." + method
+		}
+	}
+	if receiver != "" && strings.ToUpper(receiver[:1]) == receiver[:1] {
+		return receiver + "." + method
+	}
+	return ""
 }
 
 func javaName(n *parser.Node, source []byte) string {

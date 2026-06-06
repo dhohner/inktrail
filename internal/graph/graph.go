@@ -222,8 +222,10 @@ func (g *Graph) indexFunction(name string) {
 }
 
 func (g *Graph) resolveCalls(pkg, to string) []string {
-	if fn, ok := g.Functions[pkg+"."+to]; ok {
-		return []string{fn.Name}
+	for _, name := range []string{pkg + "." + to, to} {
+		if fn, ok := g.Functions[name]; ok {
+			return []string{fn.Name}
+		}
 	}
 	return g.functionsByCallName[to]
 }

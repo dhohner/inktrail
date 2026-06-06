@@ -43,6 +43,64 @@ enum Mood { HAPPY; void smile() {} }
 	}
 }
 
+func TestJavaCallsResolveLocalTargetsAndSkipExternalReceivers(t *testing.T) {
+	src := []byte(`package com.acme;
+class A {
+  void f() {
+    helper();
+    B.s();
+    new B().g();
+    System.out.println("external");
+  }
+  void helper() {}
+  void println(String s) {}
+}
+class B {
+  static void s() {}
+  void g() {}
+}
+`)
+	g, err := buildFromSources([]sourceFile{{Path: "src/main/java/com/acme/A.java", Source: src}})
+	if err != nil {
+		t.Fatalf("buildFromSources() error = %v", err)
+	}
+	from := "com.acme.A.f"
+	for _, to := range []string{"com.acme.A.helper", "com.acme.B.s", "com.acme.B.g"} {
+		if !g.Calls[from][to] {
+			t.Fatalf("missing edge %s -> %s; calls=%#v", from, to, g.Calls[from])
+		}
+		if _, ok := g.CallSite(from, to); !ok {
+			t.Fatalf("missing call site for %s -> %s", from, to)
+		}
+	}
+	if g.Calls[from]["com.acme.A.println"] {
+		t.Fatalf("external System.out.println resolved to local println: %#v", g.Calls[from])
+	}
+}
+
+func TestJavaUnqualifiedCallsPreferCurrentOwner(t *testing.T) {
+	src := []byte(`package com.acme;
+class A {
+  void f() { helper(); }
+  void helper() {}
+}
+class B {
+  void helper() {}
+}
+`)
+	g, err := buildFromSources([]sourceFile{{Path: "src/main/java/com/acme/A.java", Source: src}})
+	if err != nil {
+		t.Fatalf("buildFromSources() error = %v", err)
+	}
+	from := "com.acme.A.f"
+	if !g.Calls[from]["com.acme.A.helper"] {
+		t.Fatalf("missing owner-qualified edge; calls=%#v", g.Calls[from])
+	}
+	if g.Calls[from]["com.acme.B.helper"] {
+		t.Fatalf("unqualified call linked to sibling helper: %#v", g.Calls[from])
+	}
+}
+
 func TestJavaTestSourcesExcludedFromGraph(t *testing.T) {
 	files, err := loadFiles(t.TempDir())
 	if err != nil || len(files) != 0 {
