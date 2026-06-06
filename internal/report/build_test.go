@@ -2,6 +2,7 @@ package report
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/dhohner/inktrail/internal/diff"
@@ -81,6 +82,65 @@ func (r RepositoryB) Get() {}
 	}
 	if serviceA.Calls[0].CallSite.Path != "app.go" || serviceA.Calls[0].CallSite.Line != 9 {
 		t.Fatalf("call site=%#v", serviceA.Calls[0].CallSite)
+	}
+}
+
+func TestBuildMixedGoJavaAndUnsupportedFiles(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, "app.go", `package app
+
+func GoChanged() {
+	println("go")
+}
+`)
+	write(t, dir, "src/main/java/example/App.java", `package example;
+
+class App {
+  void javaChanged() {
+    helper();
+  }
+  void helper() {}
+}
+`)
+	write(t, dir, "web/app.ts", `export function changed() { return 1; }
+`)
+
+	g, err := graph.Build(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	r := Build(g, diff.Result{
+		Lines: []diff.Line{
+			{Path: "app.go", LineNo: 4},
+			{Path: "src/main/java/example/App.java", LineNo: 5},
+			{Path: "web/app.ts", LineNo: 1},
+		},
+		Files: []diff.FileChange{
+			{Status: "modified", Path: "app.go"},
+			{Status: "modified", Path: "src/main/java/example/App.java"},
+			{Status: "modified", Path: "web/app.ts"},
+		},
+	})
+
+	if r.Summary.Files != 3 || r.Summary.ChangedSymbols == 0 || r.Summary.Nodes == 0 {
+		t.Fatalf("summary=%#v", r.Summary)
+	}
+	if len(r.Files) != 3 || r.Files[2].Path != "web/app.ts" {
+		t.Fatalf("files=%#v", r.Files)
+	}
+	changed := map[string]bool{}
+	for _, id := range r.ChangedSymbols {
+		changed[id] = true
+		if strings.Contains(id, "web/app.ts") {
+			t.Fatalf("unsupported file produced symbol record: %s", id)
+		}
+	}
+	if !changed["app.go::app.GoChanged"] {
+		t.Fatalf("missing Go changed symbol in %#v", r.ChangedSymbols)
+	}
+	if !changed["src/main/java/example/App.java::example.App.javaChanged"] {
+		t.Fatalf("missing Java changed symbol in %#v", r.ChangedSymbols)
 	}
 }
 

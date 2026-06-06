@@ -3,9 +3,11 @@ package app
 import (
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/dhohner/inktrail/internal/diff"
 	"github.com/dhohner/inktrail/internal/graph"
+	"github.com/dhohner/inktrail/internal/parser"
 	"github.com/dhohner/inktrail/internal/report"
 )
 
@@ -17,6 +19,7 @@ type Dependencies struct {
 	InspectDiff        func(diff.Options) (diff.Result, error)
 	BuildGraph         func(string) (*graph.Graph, error)
 	BuildGitGraph      func(string) (*graph.Graph, error)
+	Warnings           io.Writer
 }
 
 // DefaultDependencies returns the production git, diff, and graph implementations.
@@ -27,6 +30,7 @@ func DefaultDependencies() Dependencies {
 		InspectDiff:        diff.Inspect,
 		BuildGraph:         graph.Build,
 		BuildGitGraph:      graph.BuildGit,
+		Warnings:           os.Stderr,
 	}
 }
 
@@ -53,6 +57,9 @@ func New(deps Dependencies) App {
 	if deps.BuildGitGraph == nil {
 		deps.BuildGitGraph = defaults.BuildGitGraph
 	}
+	if deps.Warnings == nil {
+		deps.Warnings = defaults.Warnings
+	}
 	return App{deps: deps}
 }
 
@@ -69,6 +76,7 @@ func (a App) Analyze(commits []string, out io.Writer, fallbackToHead bool) error
 	if len(result.Files) == 0 {
 		return report.WriteJSONL(out, report.Report{})
 	}
+	warnUnsupportedLanguageFiles(a.deps.Warnings, result.Files)
 
 	current, base, err := a.buildGraphs(baseRef(commits))
 	if err != nil {
@@ -135,5 +143,27 @@ func baseRef(args []string) string {
 		return args[0] + "^"
 	default:
 		return args[0]
+	}
+}
+
+func warnUnsupportedLanguageFiles(w io.Writer, files []diff.FileChange) {
+	if w == nil {
+		return
+	}
+	for _, file := range files {
+		if file.Test {
+			continue
+		}
+		path := file.Path
+		if path == "" {
+			path = file.OldPath
+		}
+		if path == "" {
+			continue
+		}
+		if _, ok := parser.LanguageForPath(path); !ok {
+			fmt.Fprintln(w, "inktrail: unsupported changed file languages skipped for symbol and call graph analysis; file records will still be emitted")
+			return
+		}
 	}
 }

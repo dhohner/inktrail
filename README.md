@@ -1,6 +1,6 @@
 # inktrail
 
-`inktrail` writes a JSONL impact report for code touched by Git diffs. It is designed for coding agents and reviewers that need a compact map of changed files, changed Go symbols, moved or deleted symbols, removed call edges, entry points, and relevant call graph nodes.
+`inktrail` writes a JSONL impact report for code touched by Git diffs. It is designed for coding agents and reviewers that need a compact map of changed files, changed Go and Java symbols, moved or deleted symbols, removed call edges, entry points, and relevant call graph nodes.
 
 ## Quick start
 
@@ -24,8 +24,6 @@ With `--agent`, `inktrail` analyzes staged changes. If nothing is staged and the
 go run ./cmd/inktrail                # interactive selector in a TTY; staged diff otherwise
 go run ./cmd/inktrail --no-ui        # staged diff, or HEAD when clean and nothing is staged
 go run ./cmd/inktrail --agent        # alias for --no-ui
-go run ./cmd/inktrail <commit>       # report for one commit vs <commit>^
-go run ./cmd/inktrail <base> <head>  # report for a commit range
 ```
 
 The range selector also accepts `base..head` in the interactive UI.
@@ -77,23 +75,32 @@ Diff scope:
 
 - staged changes by default, one commit against its parent, or an explicit two-ref range
 - file metadata and hunk ranges for production and test files
-- target-side added or modified Go lines for `changed_symbol`
+- target-side added or modified Go and Java production lines for `changed_symbol`
 - deleted files and deleted-only hunks in `file` records
 - renamed files as `status: "renamed"`
 - whitespace-only and blank-line changes ignored by default (`--ignore-all-space`, `--ignore-blank-lines`)
 
 Graph scope:
 
-- production Go files in the current workspace build `changed_symbol`, `entry_point`, and `node` records
-- production Go files at the base ref build `deleted_symbol`, `moved_symbol`, and `removed_call` records
+- production Go and Java files in the current workspace build `changed_symbol`, `entry_point`, and `node` records
+- production Go and Java files at the base ref build `deleted_symbol`, `moved_symbol`, and `removed_call` records
+- parsing uses bundled Tree-sitter grammars; symbol and call extraction only runs for languages with an Inktrail analyzer
 - base ref selection:
   - staged diff: `HEAD`
   - one commit: `<commit>^`
   - range: `<base>`
 
+Java scope:
+
+- Maven and Gradle source layouts are recognized by path convention.
+- Production Java is any `.java` file outside test-only Java source sets.
+- Test-only Java source sets include `src/test/java`, `src/integrationTest/java`, `src/functionalTest/java`, and `src/e2eTest/java`.
+- Tree-sitter provides parsing. Dependency-aware call resolution depends on repository build context and may degrade when imports, generated sources, annotation processors, or external dependencies are incomplete. In degraded mode, reports prefer local, resolvable symbols and omit uncertain external call edges.
+
 Skipped for symbol and call analysis:
 
-- test-only code: `*_test.go`, `test/`, `tests/`, and `testdata/`
+- unsupported languages: emitted as `file` records only; Inktrail writes one stderr warning per run and keeps JSONL output on stdout clean
+- test-only code: `*_test.go`, `test/`, `tests/`, `testdata/`, and Java test source sets listed above
 - vendor directories
 - blank added lines
 
