@@ -50,6 +50,7 @@ class A {
     helper();
     B.s();
     new B().g();
+    Unknown.s();
     System.out.println("external");
   }
   void helper() {}
@@ -75,6 +76,67 @@ class B {
 	}
 	if g.Calls[from]["com.acme.A.println"] {
 		t.Fatalf("external System.out.println resolved to local println: %#v", g.Calls[from])
+	}
+	if len(g.Calls[from]) != 3 {
+		t.Fatalf("external Unknown.s resolved by bare method-name fallback: %#v", g.Calls[from])
+	}
+}
+
+func TestJavaImportsResolveRepositoryTypes(t *testing.T) {
+	a := []byte(`package com.acme;
+import com.lib.B;
+import static com.lib.Util.work;
+class A {
+  void f() {
+    B.s();
+    new B().g();
+    work();
+  }
+}
+`)
+	b := []byte(`package com.lib;
+class B {
+  static void s() {}
+  void g() {}
+}
+class Util { static void work() {} }
+`)
+	g, err := buildFromSources([]sourceFile{
+		{Path: "src/main/java/com/acme/A.java", Source: a},
+		{Path: "src/main/java/com/lib/B.java", Source: b},
+	})
+	if err != nil {
+		t.Fatalf("buildFromSources() error = %v", err)
+	}
+	from := "com.acme.A.f"
+	for _, to := range []string{"com.lib.B.s", "com.lib.B.g", "com.lib.Util.work"} {
+		if !g.Calls[from][to] {
+			t.Fatalf("missing imported Java edge %s -> %s; calls=%#v", from, to, g.Calls[from])
+		}
+	}
+}
+
+func TestJavaStaticWildcardImportsResolveRepositoryMethods(t *testing.T) {
+	a := []byte(`package com.acme;
+import static com.lib.Util.*;
+class A {
+  void f() { work(); }
+}
+`)
+	util := []byte(`package com.lib;
+class Util { static void work() {} }
+`)
+	g, err := buildFromSources([]sourceFile{
+		{Path: "src/main/java/com/acme/A.java", Source: a},
+		{Path: "src/main/java/com/lib/Util.java", Source: util},
+	})
+	if err != nil {
+		t.Fatalf("buildFromSources() error = %v", err)
+	}
+	from := "com.acme.A.f"
+	to := "com.lib.Util.work"
+	if !g.Calls[from][to] {
+		t.Fatalf("missing static wildcard Java edge %s -> %s; calls=%#v", from, to, g.Calls[from])
 	}
 }
 

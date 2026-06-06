@@ -95,7 +95,7 @@ Java scope:
 - Maven and Gradle source layouts are recognized by path convention.
 - Production Java is any `.java` file outside test-only Java source sets.
 - Test-only Java source sets include `src/test/java`, `src/integrationTest/java`, `src/functionalTest/java`, and `src/e2eTest/java`.
-- Tree-sitter provides parsing. Dependency-aware call resolution depends on repository build context and may degrade when imports, generated sources, annotation processors, or external dependencies are incomplete. In degraded mode, reports prefer local, resolvable symbols and omit uncertain external call edges.
+- Tree-sitter provides parsing. Java call resolution is syntactic and repository-local: it uses package/class/method names plus source-level imports for repository-local types and static methods. It does not read Maven/Gradle dependency graphs or model dependency scopes, generated sources, or annotation processors. Reports omit uncertain external call edges.
 
 Skipped for symbol and call analysis:
 
