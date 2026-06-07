@@ -23,6 +23,7 @@ const (
 type Function struct {
 	Name      string
 	Path      string
+	Kind      string
 	StartLine int
 	EndLine   int
 	Source    string
@@ -204,7 +205,7 @@ func closeParsedSources(parsed []parsedSource) {
 func (g *Graph) addFunctions(ps parsedSource) {
 	for _, sym := range ps.Analyzer.Symbols(ps.analyzerSource()) {
 		r := sym.Node.Range()
-		g.Functions[sym.Name] = Function{Name: sym.Name, Path: ps.Path, StartLine: r.StartLine, EndLine: r.EndLine, Source: nodeSource(ps.Source, int(r.StartByte), int(r.EndByte))}
+		g.Functions[sym.Name] = Function{Name: sym.Name, Path: ps.Path, Kind: sym.Node.Kind(), StartLine: r.StartLine, EndLine: r.EndLine, Source: nodeSource(ps.Source, int(r.StartByte), int(r.EndByte))}
 		g.indexFunction(sym.Name)
 		if ps.Language == sharedparser.LanguageJava && isJavaTypeSymbol(sym.Node.Kind()) {
 			g.indexJavaType(sym.Name)
