@@ -93,6 +93,8 @@ func TestService(t *testing.T) { Service{}.Do() }
 		"{\"type\":\"changed_symbol\",\"id\":\"api.go::app.Service.Do\"}\n" +
 		"{\"type\":\"changed_symbol\",\"id\":\"worker_new.go::app.Worker\"}\n" +
 		"{\"type\":\"deleted_symbol\",\"id\":\"api.go::app.Old.Gone\"}\n" +
+		"{\"type\":\"declaration_context\",\"id\":\"api.go::app.Service.Do\",\"path\":\"api.go\",\"name\":\"Do\",\"kind\":\"method\",\"line_range\":{\"start\":8,\"end\":8},\"relationship\":\"changed_declaration\",\"changed_lines\":[{\"start\":8,\"end\":8}],\"excerpt\":{\"content\":\"func (s Service) Do() { println(\\\"new\\\"); Repo{}.Find() }\",\"truncated\":false,\"omitted_lines\":0}}\n" +
+		"{\"type\":\"declaration_context\",\"id\":\"worker_new.go::app.Worker\",\"path\":\"worker_new.go\",\"name\":\"Worker\",\"kind\":\"function\",\"line_range\":{\"start\":3,\"end\":3},\"relationship\":\"changed_declaration\",\"changed_lines\":[{\"start\":3,\"end\":3}],\"excerpt\":{\"content\":\"func Worker() { println(\\\"moved and changed\\\") }\",\"truncated\":false,\"omitted_lines\":0}}\n" +
 		"{\"type\":\"moved_symbol\",\"from\":\"worker_old.go::app.Worker\",\"to\":\"worker_new.go::app.Worker\",\"body_sha256_equal\":false}\n" +
 		"{\"type\":\"removed_call\",\"from\":\"api.go::app.Service.Do\",\"to\":\"api.go::app.Old.Gone\",\"call_site\":{\"path\":\"api.go\",\"line\":9}}\n" +
 		"{\"type\":\"entry_point\",\"id\":\"api.go::app.Controller.Handle\"}\n" +

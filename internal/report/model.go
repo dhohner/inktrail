@@ -61,6 +61,23 @@ type FilePreview struct {
 	OmittedLines int      `json:"omitted_lines"`
 }
 
+type SourceExcerpt struct {
+	Content      string `json:"content"`
+	Truncated    bool   `json:"truncated"`
+	OmittedLines int    `json:"omitted_lines"`
+}
+
+type DeclarationContext struct {
+	ID           string             `json:"id"`
+	Path         string             `json:"path"`
+	Name         string             `json:"name"`
+	Kind         string             `json:"kind"`
+	LineRange    LineRange          `json:"line_range"`
+	Relationship string             `json:"relationship"`
+	ChangedLines []ChangedLineRange `json:"changed_lines,omitempty"`
+	Excerpt      SourceExcerpt      `json:"excerpt"`
+}
+
 type FileRecord struct {
 	Type              string       `json:"type"`
 	Status            string       `json:"status"`
@@ -105,5 +122,6 @@ type Report struct {
 	MovedSymbols   []MovedSymbol     `json:"moved_symbols"`
 	RemovedCalls   []RemovedCall     `json:"removed_calls"`
 	EntryPoints    []string          `json:"entry_points"`
-	Nodes          []Node            `json:"nodes"`
+	Contexts       []DeclarationContext `json:"contexts"`
+	Nodes          []Node               `json:"nodes"`
 }

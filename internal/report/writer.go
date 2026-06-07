@@ -43,6 +43,14 @@ func WriteJSONL(w io.Writer, r Report) error {
 			return err
 		}
 	}
+	for _, context := range r.Contexts {
+		if err := enc.Encode(struct {
+			Type string `json:"type"`
+			DeclarationContext
+		}{Type: "declaration_context", DeclarationContext: context}); err != nil {
+			return err
+		}
+	}
 	for _, move := range r.MovedSymbols {
 		if err := enc.Encode(struct {
 			Type string `json:"type"`
