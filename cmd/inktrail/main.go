@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"runtime"
 
 	"github.com/dhohner/inktrail/internal/app"
 	"github.com/dhohner/inktrail/internal/diff"
 	"github.com/dhohner/inktrail/internal/graph"
+	"github.com/dhohner/inktrail/internal/report"
 	"github.com/dhohner/inktrail/internal/ui"
 )
 
@@ -18,6 +21,7 @@ var (
 	inspectDiff        = diff.Inspect
 	buildGraph         = graph.Build
 	buildGitGraph      = graph.BuildGit
+	openBrowser        = openPathInBrowser
 )
 
 func main() {
@@ -37,14 +41,19 @@ func run(args []string, out io.Writer) error {
 	}
 
 	commits := flags.Args()
+	humanReport := false
 	if len(commits) == 0 && !*noUI && stdioIsTerminal() {
 		selected, err := ui.PromptAnalysis()
 		if err != nil {
 			return err
 		}
 		commits = selected
+		humanReport = true
 	}
 
+	if humanReport {
+		return analyzeHTML(commits, os.Stderr, false)
+	}
 	return analyze(commits, out, *noUI)
 }
 
@@ -62,6 +71,43 @@ func stdioIsTerminal() bool {
 
 func analyze(commits []string, out io.Writer, fallbackToHead bool) error {
 	return newApp().Analyze(commits, out, fallbackToHead)
+}
+
+func analyzeHTML(commits []string, messages io.Writer, fallbackToHead bool) error {
+	r, err := newApp().BuildReport(commits, fallbackToHead)
+	if err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(".", "inktrail-*.html")
+	if err != nil {
+		return err
+	}
+	path := file.Name()
+	if err := report.WriteHTML(file, r); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	fmt.Fprintf(messages, "inktrail: HTML report written to %s\n", path)
+	if err := openBrowser(path); err != nil {
+		fmt.Fprintf(messages, "inktrail: could not open browser: %v\n", err)
+	}
+	return nil
+}
+
+func openPathInBrowser(path string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", path)
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", "", path)
+	default:
+		cmd = exec.Command("xdg-open", path)
+	}
+	return cmd.Start()
 }
 
 func resolveCommits(commits []string, fallbackToHead bool) ([]string, error) {

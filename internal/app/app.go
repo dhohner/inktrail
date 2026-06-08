@@ -65,24 +65,33 @@ func New(deps Dependencies) App {
 
 // Analyze writes a JSONL impact report for staged changes, one commit, or a commit range.
 func (a App) Analyze(commits []string, out io.Writer, fallbackToHead bool) error {
-	commits, err := a.ResolveCommits(commits, fallbackToHead)
+	r, err := a.BuildReport(commits, fallbackToHead)
 	if err != nil {
 		return err
+	}
+	return report.WriteJSONL(out, r)
+}
+
+// BuildReport builds an impact report for staged changes, one commit, or a commit range.
+func (a App) BuildReport(commits []string, fallbackToHead bool) (report.Report, error) {
+	commits, err := a.ResolveCommits(commits, fallbackToHead)
+	if err != nil {
+		return report.Report{}, err
 	}
 	result, err := a.deps.InspectDiff(diff.Options{Commits: commits})
 	if err != nil {
-		return err
+		return report.Report{}, err
 	}
 	if len(result.Files) == 0 {
-		return report.WriteJSONL(out, report.Report{})
+		return report.Report{}, nil
 	}
 	warnUnsupportedLanguageFiles(a.deps.Warnings, result.Files)
 
 	current, base, err := a.buildGraphs(baseRef(commits))
 	if err != nil {
-		return err
+		return report.Report{}, err
 	}
-	return report.WriteJSONL(out, report.BuildWithBase(current, base, result))
+	return report.BuildWithBase(current, base, result), nil
 }
 
 // ResolveCommits applies agent-safe fallback semantics to CLI commit arguments.
