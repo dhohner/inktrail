@@ -20,7 +20,7 @@ const (
 func fileRecord(file diff.FileChange, symbols []string) FileRecord {
 	stat := diffStat(file)
 	added := addedContents(file)
-	compact := file.Status == "added" && (stat.AddedBytes > largeAddedFileBytes || stat.AddedLines > largeAddedFileLines || isGenerated(file.Path, added) || isVendorPath(file.Path) || isBinaryPath(file.Path))
+	compact := compactFileRecord(file, stat, added)
 	record := FileRecord{
 		Type:              "file",
 		Status:            file.Status,
@@ -43,6 +43,21 @@ func fileRecord(file diff.FileChange, symbols []string) FileRecord {
 	}
 	record.Hunks = file.Hunks
 	return record
+}
+
+func compactFileRecord(file diff.FileChange, stat DiffStat, added []string) bool {
+	return file.Status == "added" && (stat.AddedBytes > largeAddedFileBytes || stat.AddedLines > largeAddedFileLines || isGenerated(file.Path, added) || isVendorPath(file.Path) || isBinaryPath(file.Path))
+}
+
+func compactPaths(files []diff.FileChange) map[string]bool {
+	out := map[string]bool{}
+	for _, file := range files {
+		stat := diffStat(file)
+		if compactFileRecord(file, stat, addedContents(file)) {
+			out[file.Path] = true
+		}
+	}
+	return out
 }
 
 func diffStat(file diff.FileChange) DiffStat {

@@ -17,7 +17,7 @@ func TestDeclarationContextsIncludeJavaChangedSymbols(t *testing.T) {
 		"com.acme.Greeter":        {{Start: 4, End: 4}},
 		"com.acme.Greeter.<init>": {{Start: 4, End: 4}},
 		"com.acme.Greeter.greet":  {{Start: 8, End: 8}},
-	}, nil)
+	}, nil, nil)
 
 	if len(got) != 3 {
 		t.Fatalf("declarationContexts() len=%d want 3: %#v", len(got), got)
@@ -56,7 +56,7 @@ func TestDeclarationContextsIncludeDirectUnchangedRelatedDeclarations(t *testing
 		},
 	}
 
-	got := declarationContexts(g, map[string][]ChangedLineRange{"com.acme.Greeter.greet": {{Start: 3, End: 3}}}, nil)
+	got := declarationContexts(g, map[string][]ChangedLineRange{"com.acme.Greeter.greet": {{Start: 3, End: 3}}}, nil, nil)
 	relationships := map[string]string{}
 	for _, ctx := range got {
 		relationships[ctx.ID] = ctx.Relationship + ":" + ctx.RelatedTo

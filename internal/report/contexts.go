@@ -10,7 +10,7 @@ import (
 
 const maxContextExcerptLines = 80
 
-func declarationContexts(g *graph.Graph, changedByFunc map[string][]ChangedLineRange, exclude map[string]bool) []DeclarationContext {
+func declarationContexts(g *graph.Graph, changedByFunc map[string][]ChangedLineRange, exclude map[string]bool, compactPaths map[string]bool) []DeclarationContext {
 	out := make([]DeclarationContext, 0, len(changedByFunc))
 	changed := map[string]bool{}
 	for name, changedLines := range changedByFunc {
@@ -19,7 +19,7 @@ func declarationContexts(g *graph.Graph, changedByFunc map[string][]ChangedLineR
 			continue
 		}
 		fn, ok := g.Functions[name]
-		if !ok || !supportsDeclarationContext(fn.Path) {
+		if !ok || !supportsDeclarationContext(fn.Path) || compactPaths[fn.Path] {
 			continue
 		}
 		out = append(out, makeDeclarationContext(fn, name, "changed_declaration", "", changedLines))
@@ -28,18 +28,18 @@ func declarationContexts(g *graph.Graph, changedByFunc map[string][]ChangedLineR
 	seenRelated := map[string]bool{}
 	for changedName := range changedByFunc {
 		changedFn, ok := g.Functions[changedName]
-		if !ok || exclude[changedName] || !supportsDeclarationContext(changedFn.Path) {
+		if !ok || exclude[changedName] || !supportsDeclarationContext(changedFn.Path) || compactPaths[changedFn.Path] {
 			continue
 		}
 		changedID := symbolID(changedFn)
 		for caller := range g.Callers[changedName] {
-			out = appendRelatedContext(out, g, caller, changedID, "direct_caller", changed, exclude, seenRelated)
+			out = appendRelatedContext(out, g, caller, changedID, "direct_caller", changed, exclude, seenRelated, compactPaths)
 		}
 		for callee := range g.Calls[changedName] {
-			out = appendRelatedContext(out, g, callee, changedID, "direct_callee", changed, exclude, seenRelated)
+			out = appendRelatedContext(out, g, callee, changedID, "direct_callee", changed, exclude, seenRelated, compactPaths)
 		}
 		if enclosing := enclosingDeclaration(g, changedName); enclosing != "" {
-			out = appendRelatedContext(out, g, enclosing, changedID, "enclosing_declaration", changed, exclude, seenRelated)
+			out = appendRelatedContext(out, g, enclosing, changedID, "enclosing_declaration", changed, exclude, seenRelated, compactPaths)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -54,12 +54,12 @@ func declarationContexts(g *graph.Graph, changedByFunc map[string][]ChangedLineR
 	return out
 }
 
-func appendRelatedContext(out []DeclarationContext, g *graph.Graph, name, relatedTo, relationship string, changed, exclude, seen map[string]bool) []DeclarationContext {
+func appendRelatedContext(out []DeclarationContext, g *graph.Graph, name, relatedTo, relationship string, changed, exclude, seen, compactPaths map[string]bool) []DeclarationContext {
 	if changed[name] || exclude[name] {
 		return out
 	}
 	fn, ok := g.Functions[name]
-	if !ok || !supportsDeclarationContext(fn.Path) {
+	if !ok || !supportsDeclarationContext(fn.Path) || compactPaths[fn.Path] {
 		return out
 	}
 	key := name + "\x00" + relationship + "\x00" + relatedTo

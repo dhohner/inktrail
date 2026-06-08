@@ -24,7 +24,7 @@ func BuildWithBase(g, old *graph.Graph, result diff.Result) Report {
 	nodes := buildNodes(g, nodeNames, changedByFunc)
 
 	changedSymbols := keysAsSymbolIDsExcluding(g, changedByFunc, movedCurrentNames(equalMoves))
-	contexts := declarationContexts(g, changedByFunc, movedCurrentNames(equalMoves))
+	contexts := declarationContexts(g, changedByFunc, movedCurrentNames(equalMoves), compactPaths(result.Files))
 	entryPointIDs := sortedKeys(entryPoints)
 	deletedSymbols := deletedSymbols(g, old, movedOldIDs(movedSymbols))
 	removedCalls := removedCalls(g, old, movedSymbolMap(movedSymbols))
