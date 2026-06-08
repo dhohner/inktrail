@@ -74,6 +74,7 @@ type DeclarationContext struct {
 	Kind         string             `json:"kind"`
 	LineRange    LineRange          `json:"line_range"`
 	Relationship string             `json:"relationship"`
+	RelatedTo    string             `json:"related_to,omitempty"`
 	ChangedLines []ChangedLineRange `json:"changed_lines,omitempty"`
 	Excerpt      SourceExcerpt      `json:"excerpt"`
 }
@@ -115,13 +116,13 @@ type Summary struct {
 }
 
 type Report struct {
-	Summary        Summary           `json:"summary"`
-	Files          []diff.FileChange `json:"files"`
-	ChangedSymbols []string          `json:"changed_symbols"`
-	DeletedSymbols []string          `json:"deleted_symbols"`
-	MovedSymbols   []MovedSymbol     `json:"moved_symbols"`
-	RemovedCalls   []RemovedCall     `json:"removed_calls"`
-	EntryPoints    []string          `json:"entry_points"`
+	Summary        Summary              `json:"summary"`
+	Files          []diff.FileChange    `json:"files"`
+	ChangedSymbols []string             `json:"changed_symbols"`
+	DeletedSymbols []string             `json:"deleted_symbols"`
+	MovedSymbols   []MovedSymbol        `json:"moved_symbols"`
+	RemovedCalls   []RemovedCall        `json:"removed_calls"`
+	EntryPoints    []string             `json:"entry_points"`
 	Contexts       []DeclarationContext `json:"contexts"`
 	Nodes          []Node               `json:"nodes"`
 }
