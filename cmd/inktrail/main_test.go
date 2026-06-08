@@ -27,7 +27,7 @@ func TestAnalyzeEmptyDiffSkipsGraphBuilds(t *testing.T) {
 	if err := analyze(nil, &out, false); err != nil {
 		t.Fatal(err)
 	}
-	want := "{\"type\":\"summary\",\"files\":0,\"test_files\":0,\"changed_symbols\":0,\"deleted_symbols\":0,\"moved_symbols\":0,\"removed_calls\":0,\"entry_points\":0,\"nodes\":0}\n"
+	want := "{\"type\":\"summary\",\"files\":0,\"test_files\":0,\"changed_symbols\":0,\"deleted_symbols\":0,\"moved_symbols\":0,\"removed_calls\":0,\"entry_points\":0,\"nodes\":0,\"context_records\":{\"total\":0,\"declaration_context\":0,\"related_declaration_context\":0}}\n"
 	if got := out.String(); got != want {
 		t.Fatalf("output=%q want=%q", got, want)
 	}

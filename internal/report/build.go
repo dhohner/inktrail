@@ -38,6 +38,7 @@ func BuildWithBase(g, old *graph.Graph, result diff.Result) Report {
 			RemovedCalls:   len(removedCalls),
 			EntryPoints:    len(entryPointIDs),
 			Nodes:          len(nodes),
+			ContextRecords: contextRecordCounts(contexts),
 		},
 		Files:          result.Files,
 		ChangedSymbols: changedSymbols,
@@ -145,6 +146,18 @@ func countTestFiles(files []diff.FileChange) int {
 		}
 	}
 	return count
+}
+
+func contextRecordCounts(contexts []DeclarationContext) ContextRecordCounts {
+	counts := ContextRecordCounts{Total: len(contexts)}
+	for _, context := range contexts {
+		if context.Relationship == "changed_declaration" {
+			counts.DeclarationContext++
+		} else {
+			counts.RelatedDeclarationContext++
+		}
+	}
+	return counts
 }
 
 func packageName(name string) string {

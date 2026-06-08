@@ -104,15 +104,22 @@ type MovedSymbol struct {
 	BodySHA256Equal bool   `json:"body_sha256_equal"`
 }
 
+type ContextRecordCounts struct {
+	Total                     int `json:"total"`
+	DeclarationContext        int `json:"declaration_context"`
+	RelatedDeclarationContext int `json:"related_declaration_context"`
+}
+
 type Summary struct {
-	Files          int `json:"files"`
-	TestFiles      int `json:"test_files"`
-	ChangedSymbols int `json:"changed_symbols"`
-	DeletedSymbols int `json:"deleted_symbols"`
-	MovedSymbols   int `json:"moved_symbols"`
-	RemovedCalls   int `json:"removed_calls"`
-	EntryPoints    int `json:"entry_points"`
-	Nodes          int `json:"nodes"`
+	Files          int                 `json:"files"`
+	TestFiles      int                 `json:"test_files"`
+	ChangedSymbols int                 `json:"changed_symbols"`
+	DeletedSymbols int                 `json:"deleted_symbols"`
+	MovedSymbols   int                 `json:"moved_symbols"`
+	RemovedCalls   int                 `json:"removed_calls"`
+	EntryPoints    int                 `json:"entry_points"`
+	Nodes          int                 `json:"nodes"`
+	ContextRecords ContextRecordCounts `json:"context_records"`
 }
 
 type Report struct {

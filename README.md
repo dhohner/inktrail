@@ -34,7 +34,7 @@ Output is JSONL: one compact JSON object per line. The first record is always `s
 
 ### Record types
 
-- `summary`: counts for files, test files, changed symbols, deleted symbols, moved symbols, removed calls, entry points, and nodes.
+- `summary`: counts for files, test files, changed symbols, deleted symbols, moved symbols, removed calls, entry points, nodes, and emitted context records.
 - `file`: changed file metadata and changed hunks.
   - `status`: `added`, `modified`, `deleted`, or `renamed`.
   - `old_path`: source path for renamed or deleted files when available.
@@ -58,8 +58,10 @@ Output is JSONL: one compact JSON object per line. The first record is always `s
 
 ## Example
 
+The summary's `context_records` object is always present. Agents can inspect `context_records.total` on the first JSONL line to decide whether declaration context exists before scanning detail records. `declaration_context` counts changed-declaration context records; `related_declaration_context` counts related caller/callee declaration context records.
+
 ```jsonl
-{"type":"summary","files":2,"test_files":1,"changed_symbols":1,"deleted_symbols":1,"moved_symbols":1,"removed_calls":1,"entry_points":1,"nodes":1}
+{"type":"summary","files":2,"test_files":1,"changed_symbols":1,"deleted_symbols":1,"moved_symbols":1,"removed_calls":1,"entry_points":1,"nodes":1,"context_records":{"total":0,"declaration_context":0,"related_declaration_context":0}}
 {"type":"file","status":"modified","path":"service/b.go","test":false,"language":"go","classification":["source"],"diffstat":{"added_lines":1,"deleted_lines":1,"added_bytes":28,"deleted_bytes":25},"symbols":["service/b.go::service.ServiceB.Do"],"content_ref":{"kind":"workspace_file","path":"service/b.go"},"hunks":[{"old_start":18,"old_lines":1,"new_start":18,"new_lines":1,"lines":[{"op":"delete","old_line":18,"content":"old.RepositoryOld{}.Get()"},{"op":"add","new_line":18,"content":"repository.RepositoryB{}.Get()"}]}]}
 {"type":"changed_symbol","id":"service/b.go::service.ServiceB.Do"}
 {"type":"deleted_symbol","id":"repository/old.go::repository.RepositoryOld.Get"}
