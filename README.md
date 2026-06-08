@@ -32,9 +32,14 @@ The range selector also accepts `base..head` in the interactive UI.
 
 Output is JSONL: one compact JSON object per line. The first record is always `summary`, followed by zero or more detail records.
 
+Declaration context records are emitted by default when supported Go or Java analysis can identify relevant declarations. They are additive to the existing stream: consumers that only need file, symbol, or graph records can ignore unknown record types and continue processing the report. Context records are factual source/declaration excerpts, not review guidance, risk scoring, policy advice, or semantic framework analysis.
+
 ### Record types
 
 - `summary`: counts for files, test files, changed symbols, deleted symbols, moved symbols, removed calls, entry points, nodes, and emitted context records.
+  - `context_records.total`: total emitted context records.
+  - `context_records.declaration_context`: changed-declaration context records.
+  - `context_records.related_declaration_context`: unchanged declarations directly related to changed declarations.
 - `file`: changed file metadata and changed hunks.
   - `status`: `added`, `modified`, `deleted`, or `renamed`.
   - `old_path`: source path for renamed or deleted files when available.
@@ -51,6 +56,16 @@ Output is JSONL: one compact JSON object per line. The first record is always `s
   - `moved_lines_omitted`: number of hunk lines omitted because they were part of a detected equal-body symbol move.
 - `changed_symbol`: current symbol containing added or modified production-code lines.
 - `deleted_symbol`: symbol present in the base graph but absent from the current graph.
+- `declaration_context`: bounded source context for a changed or directly related declaration.
+  - `id`: symbol ID for the declaration.
+  - `path`, `name`, `kind`: source location and declaration identity.
+  - `line_range`: declaration start and end lines in the current workspace.
+  - `relationship`: `changed_declaration`, `direct_caller`, `direct_callee`, or `enclosing_declaration`.
+  - `related_to`: changed symbol ID for related unchanged declarations.
+  - `changed_lines`: changed line ranges for changed declarations.
+  - `excerpt.content`: declaration source excerpt.
+  - `excerpt.truncated`: whether the excerpt was bounded.
+  - `excerpt.omitted_lines`: number of source lines omitted from a truncated excerpt.
 - `moved_symbol`: symbol whose body moved from one symbol ID to another, with `body_sha256_equal` when the body content is unchanged.
 - `removed_call`: call edge present in the base graph but absent from the current graph.
 - `entry_point`: root caller that reaches changed symbols.
@@ -61,10 +76,12 @@ Output is JSONL: one compact JSON object per line. The first record is always `s
 The summary's `context_records` object is always present. Agents can inspect `context_records.total` on the first JSONL line to decide whether declaration context exists before scanning detail records. `declaration_context` counts changed-declaration context records; `related_declaration_context` counts related caller/callee declaration context records.
 
 ```jsonl
-{"type":"summary","files":2,"test_files":1,"changed_symbols":1,"deleted_symbols":1,"moved_symbols":1,"removed_calls":1,"entry_points":1,"nodes":1,"context_records":{"total":0,"declaration_context":0,"related_declaration_context":0}}
+{"type":"summary","files":2,"test_files":1,"changed_symbols":1,"deleted_symbols":1,"moved_symbols":1,"removed_calls":1,"entry_points":1,"nodes":1,"context_records":{"total":2,"declaration_context":1,"related_declaration_context":1}}
 {"type":"file","status":"modified","path":"service/b.go","test":false,"language":"go","classification":["source"],"diffstat":{"added_lines":1,"deleted_lines":1,"added_bytes":28,"deleted_bytes":25},"symbols":["service/b.go::service.ServiceB.Do"],"content_ref":{"kind":"workspace_file","path":"service/b.go"},"hunks":[{"old_start":18,"old_lines":1,"new_start":18,"new_lines":1,"lines":[{"op":"delete","old_line":18,"content":"old.RepositoryOld{}.Get()"},{"op":"add","new_line":18,"content":"repository.RepositoryB{}.Get()"}]}]}
 {"type":"changed_symbol","id":"service/b.go::service.ServiceB.Do"}
 {"type":"deleted_symbol","id":"repository/old.go::repository.RepositoryOld.Get"}
+{"type":"declaration_context","id":"service/b.go::service.ServiceB.Do","path":"service/b.go","name":"Do","kind":"method","line_range":{"start":16,"end":22},"relationship":"changed_declaration","changed_lines":[{"start":18,"end":20}],"excerpt":{"content":"func (s ServiceB) Do() {\n\trepository.RepositoryB{}.Get()\n}","truncated":false,"omitted_lines":0}}
+{"type":"declaration_context","id":"repository/b.go::repository.RepositoryB.Get","path":"repository/b.go","name":"Get","kind":"method","line_range":{"start":8,"end":91},"relationship":"direct_callee","related_to":"service/b.go::service.ServiceB.Do","excerpt":{"content":"func (r RepositoryB) Get() {\n\t// first 80 lines of the declaration excerpt\n}","truncated":true,"omitted_lines":3}}
 {"type":"moved_symbol","from":"service/old.go::service.OldName","to":"service/new.go::service.NewName","body_sha256_equal":true}
 {"type":"removed_call","from":"service/b.go::service.ServiceB.Do","to":"repository/old.go::repository.RepositoryOld.Get","call_site":{"path":"service/b.go","line":18}}
 {"type":"entry_point","id":"controller/a.go::controller.ControllerA.Handle"}
@@ -91,6 +108,13 @@ Graph scope:
   - staged diff: `HEAD`
   - one commit: `<commit>^`
   - range: `<base>`
+
+Declaration context scope:
+
+- Rich symbol-level context is available for supported Go and Java production analysis.
+- Unsupported languages still emit `file` records with file metadata, hunks when compact enough, and `content_ref` for lazy workspace reads. They do not emit symbol-level declaration context.
+- Context excerpts are bounded to keep reports compact. When an excerpt is truncated, `excerpt.truncated` is `true` and `excerpt.omitted_lines` reports how many lines were left out.
+- Large added, generated, vendor, binary, or otherwise compacted file records may omit hunks or previews as described above; declaration context is not emitted for compacted added files.
 
 Java scope:
 
