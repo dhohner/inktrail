@@ -22,6 +22,8 @@ var (
 	buildGraph         = graph.Build
 	buildGitGraph      = graph.BuildGit
 	openBrowser        = openPathInBrowser
+	isTerminal         = stdioIsTerminal
+	promptAnalysis     = ui.PromptAnalysis
 )
 
 func main() {
@@ -42,8 +44,8 @@ func run(args []string, out io.Writer) error {
 
 	commits := flags.Args()
 	humanReport := false
-	if len(commits) == 0 && !*noUI && stdioIsTerminal() {
-		selected, err := ui.PromptAnalysis()
+	if len(commits) == 0 && !*noUI && isTerminal() {
+		selected, err := promptAnalysis()
 		if err != nil {
 			return err
 		}
