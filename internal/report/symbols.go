@@ -123,10 +123,6 @@ func compactLineRanges(lines []int) []ChangedLineRange {
 	return ranges
 }
 
-func keysAsSymbolIDs(g *graph.Graph, values map[string][]ChangedLineRange) []string {
-	return keysAsSymbolIDsExcluding(g, values, nil)
-}
-
 func keysAsSymbolIDsExcluding(g *graph.Graph, values map[string][]ChangedLineRange, exclude map[string]bool) []string {
 	ids := make([]string, 0, len(values))
 	for name := range values {

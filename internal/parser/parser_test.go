@@ -49,15 +49,12 @@ public class Greeter {
 			if doc.HasSyntaxError() {
 				t.Fatalf("expected representative %s source to parse without syntax errors", tt.language)
 			}
-			r := doc.RootRange()
+			r := doc.RootNode().Range()
 			if r.StartLine != 1 || r.EndLine != tt.endLine {
-				t.Fatalf("RootRange() lines = %d-%d, want 1-%d", r.StartLine, r.EndLine, tt.endLine)
-			}
-			if !r.ContainsLine(3) || r.ContainsLine(tt.endLine+1) {
-				t.Fatalf("ContainsLine() did not provide stable changed-line containment for %+v", r)
+				t.Fatalf("root range lines = %d-%d, want 1-%d", r.StartLine, r.EndLine, tt.endLine)
 			}
 			if r.StartByte != 0 || r.EndByte != uint(len(tt.source)) {
-				t.Fatalf("RootRange() bytes = %d-%d, want 0-%d", r.StartByte, r.EndByte, len(tt.source))
+				t.Fatalf("root range bytes = %d-%d, want 0-%d", r.StartByte, r.EndByte, len(tt.source))
 			}
 		})
 	}
@@ -109,7 +106,7 @@ func TestDocumentCloseIsIdempotent(t *testing.T) {
 	doc.Close()
 	doc.Close()
 
-	if got := doc.RootRange(); got != (Range{}) {
-		t.Fatalf("RootRange() after Close = %+v, want zero value", got)
+	if got := doc.RootNode(); got != nil {
+		t.Fatalf("RootNode() after Close = %#v, want nil", got)
 	}
 }

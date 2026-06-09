@@ -77,15 +77,6 @@ func (d *Document) Close() {
 	d.tree = nil
 }
 
-// RootRange returns the source range covered by the parse tree root node.
-func (d *Document) RootRange() Range {
-	root := d.RootNode()
-	if root == nil {
-		return Range{}
-	}
-	return root.Range()
-}
-
 // RootNode returns the root syntax node, or nil after Close.
 func (d *Document) RootNode() *Node {
 	if d == nil || d.tree == nil {
@@ -97,11 +88,6 @@ func (d *Document) RootNode() *Node {
 // HasSyntaxError reports whether Tree-sitter marked the parse with errors.
 func (d *Document) HasSyntaxError() bool {
 	return d != nil && d.tree != nil && d.tree.RootNode().HasError()
-}
-
-// ContainsLine reports whether r contains the given 1-based line number.
-func (r Range) ContainsLine(line int) bool {
-	return line >= r.StartLine && line <= r.EndLine
 }
 
 // LanguageForPath returns the supported parser language for path, if any.

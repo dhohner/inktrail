@@ -8,25 +8,24 @@
 go run ./cmd/inktrail
 ```
 
-When stdin and stdout are terminals, `inktrail` opens an interactive selector for staged changes, one commit, or a commit range. In non-TTY contexts it analyzes the staged diff.
+`inktrail` always writes JSONL to stdout. With no arguments it analyzes the staged diff.
 
-For agent-safe automation, use `--no-ui` or `--agent`:
+To analyze `HEAD` when there is no staged diff and the worktree is clean, use `--fallback-to-head`:
 
 ```sh
-go run ./cmd/inktrail --agent > inktrail.jsonl
+go run ./cmd/inktrail --fallback-to-head > inktrail.jsonl
 ```
 
-With `--agent`, `inktrail` analyzes staged changes. If nothing is staged and the worktree is clean, it falls back to `HEAD`. If unstaged or untracked changes exist, it refuses the fallback so the report cannot accidentally describe a mixed worktree.
+With `--fallback-to-head`, `inktrail` analyzes staged changes first. If nothing is staged and the worktree is clean, it falls back to `HEAD`. If unstaged or untracked changes exist, it refuses the fallback so the report cannot accidentally describe a mixed worktree.
 
 ## Usage
 
 ```sh
-go run ./cmd/inktrail                # interactive selector in a TTY; staged diff otherwise
-go run ./cmd/inktrail --no-ui        # staged diff, or HEAD when clean and nothing is staged
-go run ./cmd/inktrail --agent        # alias for --no-ui
+go run ./cmd/inktrail                         # staged diff
+go run ./cmd/inktrail HEAD                    # one commit
+go run ./cmd/inktrail main feature            # commit range
+go run ./cmd/inktrail --fallback-to-head      # staged diff, or HEAD when clean and nothing is staged
 ```
-
-The range selector also accepts `base..head` in the interactive UI.
 
 ## Output format
 

@@ -5,13 +5,6 @@ import (
 	"io"
 )
 
-func WriteJSON(w io.Writer, r Report) error {
-	enc := json.NewEncoder(w)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	return enc.Encode(r)
-}
-
 func WriteJSONL(w io.Writer, r Report) error {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)

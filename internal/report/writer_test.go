@@ -8,19 +8,6 @@ import (
 	"github.com/dhohner/inktrail/internal/diff"
 )
 
-func TestWriteJSONWritesIndentedReport(t *testing.T) {
-	r := Report{ChangedSymbols: []string{"app.go::app.F"}}
-	var buf bytes.Buffer
-
-	if err := WriteJSON(&buf, r); err != nil {
-		t.Fatal(err)
-	}
-
-	if !json.Valid(buf.Bytes()) {
-		t.Fatalf("invalid json: %s", buf.String())
-	}
-}
-
 func TestWriteJSONLWritesOneRecordPerLine(t *testing.T) {
 	r := Report{
 		Summary: Summary{Files: 1, ChangedSymbols: 1, Nodes: 1},

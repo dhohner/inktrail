@@ -72,12 +72,6 @@ func Inspect(opts Options) (Result, error) {
 	return Parse(out)
 }
 
-// Detect returns only added/modified non-test code lines from git diff output.
-func Detect(opts Options) ([]Line, error) {
-	result, err := Inspect(opts)
-	return result.Lines, err
-}
-
 // HasStagedChanges reports whether the index contains any staged file changes.
 func HasStagedChanges() (bool, error) {
 	cmd := exec.Command("git", "diff", "--staged", "--name-only")
