@@ -21,18 +21,28 @@ var (
 )
 
 func main() {
-	if err := run(os.Args[1:], os.Stdout); err != nil {
+	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return
 		}
-		fmt.Fprintln(os.Stderr, err)
+		var reported cliError
+		if !errors.As(err, &reported) {
+			fmt.Fprintln(os.Stderr, err)
+		}
 		os.Exit(1)
 	}
 }
 
-func run(args []string, out io.Writer) error {
+type cliError struct {
+	err error
+}
+
+func (e cliError) Error() string { return e.err.Error() }
+func (e cliError) Unwrap() error { return e.err }
+
+func run(args []string, out, errOut io.Writer) error {
 	flags := flag.NewFlagSet("inktrail", flag.ContinueOnError)
-	flags.SetOutput(out)
+	flags.SetOutput(errOut)
 	flags.Usage = func() {
 		fmt.Fprintln(flags.Output(), "Usage of inktrail:")
 		fmt.Fprintln(flags.Output(), "  inktrail [--fallback-to-head]")
@@ -44,7 +54,7 @@ func run(args []string, out io.Writer) error {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
 		}
-		return err
+		return cliError{err: err}
 	}
 
 	return analyze(flags.Args(), out, *fallbackToHead)

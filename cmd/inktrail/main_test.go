@@ -130,10 +130,14 @@ func TestResolveCommitsExplicitCommitsBypassFallback(t *testing.T) {
 
 func TestRunHelpShowsInvocationFormsWithoutError(t *testing.T) {
 	var out bytes.Buffer
-	if err := run([]string{"-h"}, &out); err != nil {
+	var errOut bytes.Buffer
+	if err := run([]string{"-h"}, &out, &errOut); err != nil {
 		t.Fatal(err)
 	}
-	help := out.String()
+	if out.Len() != 0 {
+		t.Fatalf("help contaminated stdout: %q", out.String())
+	}
+	help := errOut.String()
 	for _, want := range []string{
 		"inktrail [--fallback-to-head]",
 		"inktrail <commit>",
@@ -148,6 +152,34 @@ func TestRunHelpShowsInvocationFormsWithoutError(t *testing.T) {
 	}
 }
 
+func TestRunInvalidFlagWritesErrorAndUsageToStderrOnly(t *testing.T) {
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+
+	err := run([]string{"--no-such-flag"}, &out, &errOut)
+	if err == nil {
+		t.Fatal("expected invalid flag error")
+	}
+	if out.Len() != 0 {
+		t.Fatalf("invalid flag contaminated stdout: %q", out.String())
+	}
+	stderr := errOut.String()
+	for _, want := range []string{
+		"flag provided but not defined: -no-such-flag",
+		"Usage of inktrail:",
+		"inktrail [--fallback-to-head]",
+		"inktrail <commit>",
+		"inktrail <base> <head>",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("stderr missing %q: %s", want, stderr)
+		}
+	}
+	if strings.Contains(stderr, "{\"type\"") {
+		t.Fatalf("stderr included report JSONL: %s", stderr)
+	}
+}
+
 func TestRunWritesJSONL(t *testing.T) {
 	withChangeDetectors(t, boolFunc(true), nil)
 	withAnalysisDeps(t, func(opts diff.Options) (diff.Result, error) {
@@ -159,8 +191,12 @@ func TestRunWritesJSONL(t *testing.T) {
 	})
 
 	var out bytes.Buffer
-	if err := run(nil, &out); err != nil {
+	var errOut bytes.Buffer
+	if err := run(nil, &out, &errOut); err != nil {
 		t.Fatal(err)
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", errOut.String())
 	}
 	if !strings.HasPrefix(out.String(), "{\"type\":\"summary\"") {
 		t.Fatalf("stdout is not clean JSONL: %q", out.String())
