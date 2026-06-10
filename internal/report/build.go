@@ -6,6 +6,7 @@ import (
 
 	"github.com/dhohner/inktrail/internal/diff"
 	"github.com/dhohner/inktrail/internal/graph"
+	"github.com/dhohner/inktrail/internal/metadata"
 )
 
 func Build(g *graph.Graph, result diff.Result) Report {
@@ -30,6 +31,7 @@ func BuildWithBase(g, old *graph.Graph, result diff.Result) Report {
 	removedCalls := removedCalls(g, old, movedSymbolMap(movedSymbols))
 	return Report{
 		Summary: Summary{
+			SchemaVersion:  metadata.SchemaVersion,
 			Files:          len(result.Files),
 			TestFiles:      countTestFiles(result.Files),
 			ChangedSymbols: len(changedSymbols),

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -28,7 +29,7 @@ func TestAnalyzeEmptyDiffSkipsGraphBuilds(t *testing.T) {
 	if err := analyze(nil, &out, false); err != nil {
 		t.Fatal(err)
 	}
-	want := "{\"type\":\"summary\",\"files\":0,\"test_files\":0,\"changed_symbols\":0,\"deleted_symbols\":0,\"moved_symbols\":0,\"removed_calls\":0,\"entry_points\":0,\"nodes\":0,\"context_records\":{\"total\":0,\"declaration_context\":0,\"related_declaration_context\":0}}\n"
+	want := "{\"type\":\"summary\",\"schema_version\":\"1.0\",\"files\":0,\"test_files\":0,\"changed_symbols\":0,\"deleted_symbols\":0,\"moved_symbols\":0,\"removed_calls\":0,\"entry_points\":0,\"nodes\":0,\"context_records\":{\"total\":0,\"declaration_context\":0,\"related_declaration_context\":0}}\n"
 	if got := out.String(); got != want {
 		t.Fatalf("output=%q want=%q", got, want)
 	}
@@ -177,6 +178,58 @@ func TestRunInvalidFlagWritesErrorAndUsageToStderrOnly(t *testing.T) {
 	}
 	if strings.Contains(stderr, "{\"type\"") {
 		t.Fatalf("stderr included report JSONL: %s", stderr)
+	}
+}
+
+func TestRunVersionWritesPlainTextWithoutAnalysis(t *testing.T) {
+	withAnalysisDeps(t, func(opts diff.Options) (diff.Result, error) {
+		t.Fatal("version should not inspect diffs")
+		return diff.Result{}, nil
+	}, func(string) (*graph.Graph, error) {
+		t.Fatal("version should not build current graph")
+		return nil, nil
+	}, func(string) (*graph.Graph, error) {
+		t.Fatal("version should not build base graph")
+		return nil, nil
+	})
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := run([]string{"--version"}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", errOut.String())
+	}
+	got := out.String()
+	for _, want := range []string{"inktrail", "schema 1.0", "go,java"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("version output missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestRunVersionJSONWritesMetadataObject(t *testing.T) {
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := run([]string{"--version", "--json"}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Name               string   `json:"name"`
+		Version            string   `json:"version"`
+		Commit             string   `json:"commit"`
+		SchemaVersion      string   `json:"schema_version"`
+		SupportedLanguages []string `json:"supported_languages"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("invalid json version output %q: %v", out.String(), err)
+	}
+	if got.Name != "inktrail" || got.Version == "" || got.Commit == "" || got.SchemaVersion != "1.0" || !reflect.DeepEqual(got.SupportedLanguages, []string{"go", "java"}) {
+		t.Fatalf("unexpected version metadata: %#v", got)
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("unexpected stderr: %q", errOut.String())
 	}
 }
 

@@ -23,7 +23,7 @@ func TestWriteJSONLWritesOneRecordPerLine(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := "{\"type\":\"summary\",\"files\":1,\"test_files\":0,\"changed_symbols\":1,\"deleted_symbols\":0,\"moved_symbols\":0,\"removed_calls\":0,\"entry_points\":0,\"nodes\":1,\"context_records\":{\"total\":0,\"declaration_context\":0,\"related_declaration_context\":0}}\n" +
+	want := "{\"type\":\"summary\",\"schema_version\":\"1.0\",\"files\":1,\"test_files\":0,\"changed_symbols\":1,\"deleted_symbols\":0,\"moved_symbols\":0,\"removed_calls\":0,\"entry_points\":0,\"nodes\":1,\"context_records\":{\"total\":0,\"declaration_context\":0,\"related_declaration_context\":0}}\n" +
 		"{\"type\":\"file\",\"status\":\"modified\",\"path\":\"app.go\",\"test\":false,\"language\":\"go\",\"classification\":[\"source\"],\"diffstat\":{\"added_lines\":1,\"deleted_lines\":0,\"added_bytes\":19,\"deleted_bytes\":0},\"symbols\":[\"app.go::app.F\"],\"content_ref\":{\"kind\":\"workspace_file\",\"path\":\"app.go\"},\"hunks\":[{\"old_start\":4,\"old_lines\":1,\"new_start\":4,\"new_lines\":1,\"lines\":[{\"op\":\"add\",\"new_line\":4,\"content\":\"if a < b && c > d {\"}]}]}\n" +
 		"{\"type\":\"changed_symbol\",\"id\":\"app.go::app.F\"}\n" +
 		"{\"type\":\"node\",\"id\":\"app.go::app.F\",\"path\":\"app.go\",\"name\":\"F\",\"kind\":\"function\",\"start_line\":3,\"end_line\":5,\"changed\":true,\"changed_lines\":[{\"start\":4,\"end\":4}],\"package\":\"app\"}\n"

@@ -111,6 +111,7 @@ type ContextRecordCounts struct {
 }
 
 type Summary struct {
+	SchemaVersion  string              `json:"schema_version"`
 	Files          int                 `json:"files"`
 	TestFiles      int                 `json:"test_files"`
 	ChangedSymbols int                 `json:"changed_symbols"`

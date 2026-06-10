@@ -3,9 +3,14 @@ package report
 import (
 	"encoding/json"
 	"io"
+
+	"github.com/dhohner/inktrail/internal/metadata"
 )
 
 func WriteJSONL(w io.Writer, r Report) error {
+	if r.Summary.SchemaVersion == "" {
+		r.Summary.SchemaVersion = metadata.SchemaVersion
+	}
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(struct {
