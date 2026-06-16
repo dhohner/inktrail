@@ -21,6 +21,14 @@ type Object struct {
 }
 
 func WriteJSONL(w io.Writer, r Report) error {
+	return WriteJSONLWithOptions(w, r, SizeOptions{})
+}
+
+func WriteJSONLWithOptions(w io.Writer, r Report, opts SizeOptions) error {
+	return writeJSONLWithOptions(w, prepareForWrite(r, opts, "jsonl"), opts)
+}
+
+func writeJSONLWithOptions(w io.Writer, r Report, opts SizeOptions) error {
 	r = withSchemaVersion(r)
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
@@ -30,9 +38,9 @@ func WriteJSONL(w io.Writer, r Report) error {
 	}{Type: "summary", Summary: r.Summary}); err != nil {
 		return err
 	}
-	fileSymbols := symbolsByPath(r.Nodes)
+	fileSymbols := fileSymbolsForReport(r)
 	for _, file := range r.Files {
-		if err := enc.Encode(fileRecord(file, fileSymbols[file.Path])); err != nil {
+		if err := enc.Encode(fileRecordWithOptions(file, fileSymbols[file.Path], opts)); err != nil {
 			return err
 		}
 	}
@@ -96,30 +104,69 @@ func WriteJSONL(w io.Writer, r Report) error {
 }
 
 func WriteJSON(w io.Writer, r Report) error {
+	return WriteJSONWithOptions(w, r, SizeOptions{})
+}
+
+func WriteJSONWithOptions(w io.Writer, r Report, opts SizeOptions) error {
+	return writeJSONWithOptions(w, prepareForWrite(r, opts, "json"), opts)
+}
+
+func writeJSONWithOptions(w io.Writer, r Report, opts SizeOptions) error {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
-	return enc.Encode(ToObject(r))
+	return enc.Encode(toObjectWithOptions(r, opts))
 }
 
 func ToObject(r Report) Object {
+	return toObjectWithOptions(r, SizeOptions{})
+}
+
+func toObjectWithOptions(r Report, opts SizeOptions) Object {
 	r = withSchemaVersion(r)
-	fileSymbols := symbolsByPath(r.Nodes)
+	fileSymbols := fileSymbolsForReport(r)
 	files := make([]FileRecord, 0, len(r.Files))
 	for _, file := range r.Files {
-		files = append(files, fileRecord(file, fileSymbols[file.Path]))
+		files = append(files, fileRecordWithOptions(file, fileSymbols[file.Path], opts))
 	}
 	return Object{
 		SchemaVersion:  r.Summary.SchemaVersion,
 		Summary:        r.Summary,
 		Files:          files,
-		ChangedSymbols: append([]string(nil), r.ChangedSymbols...),
-		DeletedSymbols: append([]string(nil), r.DeletedSymbols...),
-		Contexts:       append([]DeclarationContext(nil), r.Contexts...),
-		MovedSymbols:   append([]MovedSymbol(nil), r.MovedSymbols...),
-		RemovedCalls:   append([]RemovedCall(nil), r.RemovedCalls...),
-		EntryPoints:    append([]string(nil), r.EntryPoints...),
-		Nodes:          append([]Node(nil), r.Nodes...),
+		ChangedSymbols: cloneStrings(r.ChangedSymbols),
+		DeletedSymbols: cloneStrings(r.DeletedSymbols),
+		Contexts:       cloneDeclarationContexts(r.Contexts),
+		MovedSymbols:   cloneMovedSymbols(r.MovedSymbols),
+		RemovedCalls:   cloneRemovedCalls(r.RemovedCalls),
+		EntryPoints:    cloneStrings(r.EntryPoints),
+		Nodes:          cloneNodes(r.Nodes),
 	}
+}
+
+func fileSymbolsForReport(r Report) map[string][]string {
+	if r.FileSymbols != nil {
+		return r.FileSymbols
+	}
+	return symbolsByPath(r.Nodes)
+}
+
+func cloneStrings(in []string) []string {
+	return append([]string{}, in...)
+}
+
+func cloneDeclarationContexts(in []DeclarationContext) []DeclarationContext {
+	return append([]DeclarationContext{}, in...)
+}
+
+func cloneMovedSymbols(in []MovedSymbol) []MovedSymbol {
+	return append([]MovedSymbol{}, in...)
+}
+
+func cloneRemovedCalls(in []RemovedCall) []RemovedCall {
+	return append([]RemovedCall{}, in...)
+}
+
+func cloneNodes(in []Node) []Node {
+	return append([]Node{}, in...)
 }
 
 func withSchemaVersion(r Report) Report {

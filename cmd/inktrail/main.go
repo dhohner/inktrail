@@ -53,6 +53,7 @@ func run(args []string, out, errOut io.Writer) error {
 		fmt.Fprintln(flags.Output(), "  inktrail --version [--json]")
 		fmt.Fprintln(flags.Output(), "  inktrail [--fallback-to-head] [--format jsonl|json] [--output <path>]")
 		fmt.Fprintln(flags.Output(), "  inktrail [--include <glob>] [--exclude <glob>] [--exclude-vendor] [--changed-only]")
+		fmt.Fprintln(flags.Output(), "  inktrail [--max-lines-per-hunk N] [--max-context-lines N] [--max-records N] [--budget-tokens N]")
 		fmt.Fprintln(flags.Output(), "  inktrail <commit>")
 		fmt.Fprintln(flags.Output(), "  inktrail <base> <head>")
 		fmt.Fprintln(flags.Output(), "  inktrail --base <ref> --head <ref>")
@@ -75,6 +76,10 @@ func run(args []string, out, errOut io.Writer) error {
 	include := flags.String("include", "", "limit report to changed paths matching glob pattern")
 	excludeVendor := flags.Bool("exclude-vendor", false, "exclude vendor-scoped files from report consideration")
 	changedOnly := flags.Bool("changed-only", false, "limit emitted context to changed files")
+	maxLinesPerHunk := flags.Int("max-lines-per-hunk", 0, "maximum changed lines emitted per hunk (0 means unlimited)")
+	maxContextLines := flags.Int("max-context-lines", 0, "maximum lines emitted per declaration context excerpt (0 means normal report excerpt behavior)")
+	maxRecords := flags.Int("max-records", 0, "maximum detail records emitted after the summary (0 means unlimited)")
+	budgetTokens := flags.Int("budget-tokens", 0, "approximate report budget using ceil(serialized_character_count / 4); for planning, not exact tokenizer output (0 means unlimited)")
 	flags.Var(excludes, "exclude", "exclude changed paths matching glob pattern (repeatable)")
 	flags.Var(base, "base", "base revision for range analysis (requires --head)")
 	flags.Var(head, "head", "head revision for range analysis (requires --base)")
@@ -105,7 +110,11 @@ func run(args []string, out, errOut io.Writer) error {
 	if err := filters.Validate(); err != nil {
 		return err
 	}
-	return analyzeWithOptions(commits, out, *fallbackToHead, *reportFormat, *outputPath, filters)
+	size := report.SizeOptions{MaxLinesPerHunk: *maxLinesPerHunk, MaxContextLines: *maxContextLines, MaxRecords: *maxRecords, BudgetTokens: *budgetTokens}
+	if err := size.Validate(); err != nil {
+		return err
+	}
+	return analyzeWithOptions(commits, out, *fallbackToHead, *reportFormat, *outputPath, filters, size)
 }
 
 func resolveRevisionArgs(positionals []string, base, head *revisionFlag) ([]string, error) {
@@ -171,10 +180,10 @@ func writeVersion(out io.Writer, asJSON bool) error {
 }
 
 func analyze(commits []string, out io.Writer, fallbackToHead bool) error {
-	return analyzeWithOptions(commits, out, fallbackToHead, "jsonl", "", report.FilterOptions{})
+	return analyzeWithOptions(commits, out, fallbackToHead, "jsonl", "", report.FilterOptions{}, report.SizeOptions{})
 }
 
-func analyzeWithOptions(commits []string, out io.Writer, fallbackToHead bool, format, outputPath string, filters report.FilterOptions) error {
+func analyzeWithOptions(commits []string, out io.Writer, fallbackToHead bool, format, outputPath string, filters report.FilterOptions, size report.SizeOptions) error {
 	writeReport, err := writerForFormat(format)
 	if err != nil {
 		return cliError{err: err}
@@ -189,11 +198,11 @@ func analyzeWithOptions(commits []string, out io.Writer, fallbackToHead bool, fo
 		defer file.Close()
 		target = file
 	}
-	r, err := newApp().BuildReportWithOptions(commits, fallbackToHead, app.ReportOptions{PathFilter: filters})
+	r, err := newApp().BuildReportWithOptions(commits, fallbackToHead, app.ReportOptions{PathFilter: filters, Size: size})
 	if err != nil {
 		return err
 	}
-	if err := writeReport(target, r); err != nil {
+	if err := writeReport(target, r, size); err != nil {
 		return cliError{err: fmt.Errorf("write output: %w", err)}
 	}
 	if file != nil {
@@ -205,12 +214,12 @@ func analyzeWithOptions(commits []string, out io.Writer, fallbackToHead bool, fo
 	return nil
 }
 
-func writerForFormat(format string) (func(io.Writer, report.Report) error, error) {
+func writerForFormat(format string) (func(io.Writer, report.Report, report.SizeOptions) error, error) {
 	switch format {
 	case "", "jsonl":
-		return report.WriteJSONL, nil
+		return report.WriteJSONLWithOptions, nil
 	case "json":
-		return report.WriteJSON, nil
+		return report.WriteJSONWithOptions, nil
 	default:
 		return nil, fmt.Errorf("unsupported format %q (supported: jsonl, json)", format)
 	}

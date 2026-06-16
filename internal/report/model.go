@@ -110,6 +110,16 @@ type ContextRecordCounts struct {
 	RelatedDeclarationContext int `json:"related_declaration_context"`
 }
 
+type Omission struct {
+	Kind          string `json:"kind"`
+	Reason        string `json:"reason"`
+	Path          string `json:"path,omitempty"`
+	RecordType    string `json:"record_type,omitempty"`
+	OriginalCount int    `json:"original_count"`
+	EmittedCount  int    `json:"emitted_count"`
+	OmittedCount  int    `json:"omitted_count"`
+}
+
 type Summary struct {
 	SchemaVersion  string              `json:"schema_version"`
 	Files          int                 `json:"files"`
@@ -121,6 +131,7 @@ type Summary struct {
 	EntryPoints    int                 `json:"entry_points"`
 	Nodes          int                 `json:"nodes"`
 	ContextRecords ContextRecordCounts `json:"context_records"`
+	Omissions      []Omission          `json:"omissions,omitempty"`
 }
 
 type Report struct {
@@ -133,4 +144,5 @@ type Report struct {
 	EntryPoints    []string             `json:"entry_points"`
 	Contexts       []DeclarationContext `json:"contexts"`
 	Nodes          []Node               `json:"nodes"`
+	FileSymbols    map[string][]string  `json:"-"`
 }

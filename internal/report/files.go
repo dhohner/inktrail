@@ -18,6 +18,10 @@ const (
 )
 
 func fileRecord(file diff.FileChange, symbols []string) FileRecord {
+	return fileRecordWithOptions(file, symbols, SizeOptions{})
+}
+
+func fileRecordWithOptions(file diff.FileChange, symbols []string, opts SizeOptions) FileRecord {
 	stat := diffStat(file)
 	added := addedContents(file)
 	compact := compactFileRecord(file, stat, added)
@@ -41,7 +45,10 @@ func fileRecord(file diff.FileChange, symbols []string) FileRecord {
 		record.Preview = preview(added)
 		return record
 	}
-	record.Hunks = file.Hunks
+	record.Hunks = compactHunks(file.Hunks, opts.MaxLinesPerHunk)
+	if omitted := omittedHunkLines(record.Hunks); omitted > 0 {
+		record.OmittedLines = omitted
+	}
 	return record
 }
 

@@ -29,6 +29,7 @@ go run ./cmd/inktrail --fallback-to-head      # staged diff, or HEAD when clean 
 go run ./cmd/inktrail --include 'internal/**/*.go'
 go run ./cmd/inktrail --exclude '**/*_test.go' --exclude-vendor
 go run ./cmd/inktrail --changed-only
+go run ./cmd/inktrail --max-lines-per-hunk 40 --max-context-lines 60 --max-records 500 --budget-tokens 12000
 ```
 
 ## Path filtering
@@ -47,6 +48,17 @@ go run ./cmd/inktrail --include 'internal/**/*.go'
 go run ./cmd/inktrail --exclude '**/*_test.go' --exclude 'vendor/**'
 go run ./cmd/inktrail --include 'service/**' --changed-only
 ```
+
+## Size and token budget controls
+
+Use size controls when an agent needs a bounded prompt input:
+
+- `--max-lines-per-hunk N` emits at most `N` changed lines per hunk and records omitted line counts on the hunk/file plus summary `omissions`, without changing file metadata or diffstat counts.
+- `--max-context-lines N` emits at most `N` lines per declaration context excerpt and records truncation details in `excerpt` plus summary `omissions`.
+- `--max-records N` keeps the summary and highest-priority detail records, then reports omitted detail counts in summary `omissions`.
+- `--budget-tokens N` applies an approximate planning budget using `ceil(serialized_character_count / 4)` over the JSONL or JSON report. This is model-agnostic guidance, not exact tokenizer output.
+
+When records must be omitted, Inktrail preserves the summary first, then higher-priority detail records before lower-priority graph-detail records. Priority order is: file records, changed symbols, deleted symbols, declaration contexts, moved symbols, removed calls, entry points, then graph nodes. File records retain their symbol lists even when graph nodes are trimmed. Very large context omission lists may be grouped by path/relationship; under token-budget pressure, verbose omission metadata may be further aggregated by omission kind/reason so the summary remains compact and machine-readable. If the summary alone exceeds `--budget-tokens`, Inktrail emits best-effort output with `budget_floor_exceeded` omission metadata.
 
 ## Output format
 
@@ -71,8 +83,8 @@ Declaration context records are emitted by default when supported Go or Java ana
   - `diffstat`: added/deleted line and byte counts.
   - `symbols`: relevant impacted symbols in the file when known.
   - `content_ref`: lazy-read handle for current workspace files (`kind: "workspace_file"`, `path`, optional `sha256`).
-  - `hunks`: old/new line ranges plus changed `lines` (`op`, `old_line`, `new_line`, `content`).
-  - `hunks_omitted`, `preview`, `omitted_lines`: present when a large added, generated, vendor, or binary file is summarized instead of emitted in full.
+  - `hunks`: old/new line ranges plus changed `lines` (`op`, `old_line`, `new_line`, `content`); hunk `omitted_lines` is present when `--max-lines-per-hunk` truncates a hunk.
+  - `hunks_omitted`, `preview`, `omitted_lines`: present when a large added, generated, vendor, or binary file is summarized instead of emitted in full, or when hunk lines are truncated.
   - `moved_lines_omitted`: number of hunk lines omitted because they were part of a detected equal-body symbol move.
 - `changed_symbol`: current symbol containing added or modified production-code lines.
 - `deleted_symbol`: symbol present in the base graph but absent from the current graph.

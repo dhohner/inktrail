@@ -508,6 +508,68 @@ func TestRunRejectsNamedRevisionFlagAfterPositionalWithoutStdout(t *testing.T) {
 	}
 }
 
+func TestRunRejectsNegativeSizeLimitWithoutStdout(t *testing.T) {
+	stubEmptyAnalysis(t)
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	err := run([]string{"--max-records", "-1"}, &out, &errOut)
+	if err == nil {
+		t.Fatal("expected size validation error")
+	}
+	if out.Len() != 0 {
+		t.Fatalf("stdout contaminated: %q", out.String())
+	}
+	if !strings.Contains(err.Error(), "non-negative") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunSizeFlagsAffectReportOutput(t *testing.T) {
+	withAnalysisDeps(t, func(opts diff.Options) (diff.Result, error) {
+		return diff.Result{Files: []diff.FileChange{{Status: "modified", Path: "app.go", Hunks: []diff.Hunk{{Lines: []diff.HunkLine{{Op: "add", NewLine: 1, Content: "a"}, {Op: "add", NewLine: 2, Content: "b"}}}}}}}, nil
+	}, func(string) (*graph.Graph, error) {
+		return &graph.Graph{}, nil
+	}, func(string) (*graph.Graph, error) {
+		return &graph.Graph{}, nil
+	})
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := run([]string{"--format", "json", "--max-lines-per-hunk", "1", "--max-records", "1"}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Summary struct {
+			Omissions []struct {
+				Reason       string `json:"reason"`
+				EmittedCount int    `json:"emitted_count"`
+			} `json:"omissions"`
+		} `json:"summary"`
+		Files []struct {
+			OmittedLines int `json:"omitted_lines"`
+			Hunks        []struct {
+				Lines []json.RawMessage `json:"lines"`
+			} `json:"hunks"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("invalid json output %q: %v", out.String(), err)
+	}
+	if len(got.Files) != 1 || got.Files[0].OmittedLines != 1 || len(got.Files[0].Hunks[0].Lines) != 1 {
+		t.Fatalf("hunk limit was not applied: %#v", got.Files)
+	}
+	var sawHunkOmission bool
+	for _, omission := range got.Summary.Omissions {
+		if omission.Reason == "max_lines_per_hunk" && omission.EmittedCount == 1 {
+			sawHunkOmission = true
+		}
+	}
+	if !sawHunkOmission {
+		t.Fatalf("missing hunk omission metadata: %#v", got.Summary.Omissions)
+	}
+}
+
 func boolFunc(v bool) func() (bool, error) {
 	return func() (bool, error) { return v, nil }
 }

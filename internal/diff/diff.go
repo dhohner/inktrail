@@ -21,11 +21,12 @@ type Line struct {
 
 // Hunk identifies changed line ranges and the changed code lines in that range.
 type Hunk struct {
-	OldStart int        `json:"old_start"`
-	OldLines int        `json:"old_lines"`
-	NewStart int        `json:"new_start"`
-	NewLines int        `json:"new_lines"`
-	Lines    []HunkLine `json:"lines,omitempty"`
+	OldStart     int        `json:"old_start"`
+	OldLines     int        `json:"old_lines"`
+	NewStart     int        `json:"new_start"`
+	NewLines     int        `json:"new_lines"`
+	OmittedLines int        `json:"omitted_lines,omitempty"`
+	Lines        []HunkLine `json:"lines,omitempty"`
 }
 
 // HunkLine is one changed line in a unified diff hunk.

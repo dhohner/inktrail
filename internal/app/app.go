@@ -75,6 +75,7 @@ func (a App) Analyze(commits []string, out io.Writer, fallbackToHead bool) error
 // ReportOptions configures report construction.
 type ReportOptions struct {
 	PathFilter report.FilterOptions
+	Size       report.SizeOptions
 }
 
 // BuildReport builds an impact report for staged changes, one commit, or a commit range.
@@ -89,6 +90,9 @@ func (a App) BuildReportWithOptions(commits []string, fallbackToHead bool, opts 
 		return report.Report{}, err
 	}
 	if err := opts.PathFilter.Validate(); err != nil {
+		return report.Report{}, err
+	}
+	if err := opts.Size.Validate(); err != nil {
 		return report.Report{}, err
 	}
 	result, err := a.deps.InspectDiff(diff.Options{Commits: commits})
