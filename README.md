@@ -24,6 +24,7 @@ With `--fallback-to-head`, `inktrail` analyzes staged changes first. If nothing 
 go run ./cmd/inktrail                         # staged diff
 go run ./cmd/inktrail HEAD                    # one commit
 go run ./cmd/inktrail main feature            # commit range
+go run ./cmd/inktrail --base main --head feature # named commit range
 go run ./cmd/inktrail --fallback-to-head      # staged diff, or HEAD when clean and nothing is staged
 ```
 
@@ -91,7 +92,7 @@ The summary's `context_records` object is always present. Agents can inspect `co
 
 Diff scope:
 
-- staged changes by default, one commit against its parent, or an explicit two-ref range
+- staged changes by default, one commit against its parent, or an explicit two-ref range (`<base> <head>` or `--base <ref> --head <ref>`)
 - file metadata and hunk ranges for production and test files
 - target-side added or modified Go and Java production lines for `changed_symbol`
 - deleted files and deleted-only hunks in `file` records

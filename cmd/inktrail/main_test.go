@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"reflect"
 	"strings"
@@ -144,6 +145,7 @@ func TestRunHelpShowsInvocationFormsWithoutError(t *testing.T) {
 		"inktrail [--fallback-to-head]",
 		"inktrail <commit>",
 		"inktrail <base> <head>",
+		"inktrail --base <ref> --head <ref>",
 	} {
 		if !strings.Contains(help, want) {
 			t.Fatalf("help missing %q: %s", want, help)
@@ -172,6 +174,7 @@ func TestRunInvalidFlagWritesErrorAndUsageToStderrOnly(t *testing.T) {
 		"inktrail [--fallback-to-head]",
 		"inktrail <commit>",
 		"inktrail <base> <head>",
+		"inktrail --base <ref> --head <ref>",
 	} {
 		if !strings.Contains(stderr, want) {
 			t.Fatalf("stderr missing %q: %s", want, stderr)
@@ -366,6 +369,87 @@ func TestAnalyzePassesExplicitRangeAndUsesRangeBase(t *testing.T) {
 	}
 	if !reflect.DeepEqual(baseRefs, []string{"main"}) {
 		t.Fatalf("base refs=%v, want [main]", baseRefs)
+	}
+}
+
+func TestRunNamedRangeMatchesPositionalRangeSemantics(t *testing.T) {
+	var inspected []string
+	var baseRefs []string
+	withAnalysisDeps(t, func(opts diff.Options) (diff.Result, error) {
+		inspected = append([]string(nil), opts.Commits...)
+		return diff.Result{Files: []diff.FileChange{{Status: "modified", Path: "app.go"}}}, nil
+	}, func(string) (*graph.Graph, error) {
+		return &graph.Graph{}, nil
+	}, func(ref string) (*graph.Graph, error) {
+		baseRefs = append(baseRefs, ref)
+		return &graph.Graph{}, nil
+	})
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := run([]string{"--base", "main", "--head", "feature"}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(inspected, []string{"main", "feature"}) {
+		t.Fatalf("inspected commits=%v, want [main feature]", inspected)
+	}
+	if !reflect.DeepEqual(baseRefs, []string{"main"}) {
+		t.Fatalf("base refs=%v, want [main]", baseRefs)
+	}
+}
+
+func TestRunRejectsNamedAndPositionalRevisionMixWithoutStdout(t *testing.T) {
+	stubEmptyAnalysis(t)
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	err := run([]string{"--base", "main", "--head", "feature", "extra"}, &out, &errOut)
+	if err == nil {
+		t.Fatal("expected ambiguous revision error")
+	}
+	if out.Len() != 0 {
+		t.Fatalf("stdout contaminated: %q", out.String())
+	}
+	if !strings.Contains(err.Error(), "cannot combine --base/--head with positional") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var reported cliError
+	if errors.As(err, &reported) {
+		t.Fatalf("ambiguous revision errors must be printable by main, got cliError: %v", err)
+	}
+}
+
+func TestRunRejectsIncompleteNamedRangeWithoutStdout(t *testing.T) {
+	stubEmptyAnalysis(t)
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	err := run([]string{"--base", "main"}, &out, &errOut)
+	if err == nil {
+		t.Fatal("expected incomplete range error")
+	}
+	if out.Len() != 0 {
+		t.Fatalf("stdout contaminated: %q", out.String())
+	}
+	if !strings.Contains(err.Error(), "--base and --head must be provided together") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunRejectsNamedRevisionFlagAfterPositionalWithoutStdout(t *testing.T) {
+	stubEmptyAnalysis(t)
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	err := run([]string{"main", "--base", "other", "--head", "feature"}, &out, &errOut)
+	if err == nil {
+		t.Fatal("expected ambiguous revision error")
+	}
+	if out.Len() != 0 {
+		t.Fatalf("stdout contaminated: %q", out.String())
+	}
+	if !strings.Contains(err.Error(), "cannot combine --base/--head with positional") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

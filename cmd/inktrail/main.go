@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/dhohner/inktrail/internal/report"
 
@@ -53,12 +54,17 @@ func run(args []string, out, errOut io.Writer) error {
 		fmt.Fprintln(flags.Output(), "  inktrail [--fallback-to-head] [--format jsonl|json] [--output <path>]")
 		fmt.Fprintln(flags.Output(), "  inktrail <commit>")
 		fmt.Fprintln(flags.Output(), "  inktrail <base> <head>")
+		fmt.Fprintln(flags.Output(), "  inktrail --base <ref> --head <ref>")
 	}
 	fallbackToHead := flags.Bool("fallback-to-head", false, "analyze HEAD when no commits are provided, the worktree is clean, and nothing is staged")
 	reportFormat := flags.String("format", "jsonl", "report format: jsonl or json")
 	outputPath := flags.String("output", "", "write report to path instead of stdout")
 	showVersion := flags.Bool("version", false, "print version metadata and exit")
 	jsonVersion := flags.Bool("json", false, "print version metadata as JSON (with --version)")
+	base := newRevisionFlag()
+	head := newRevisionFlag()
+	flags.Var(base, "base", "base revision for range analysis (requires --head)")
+	flags.Var(head, "head", "head revision for range analysis (requires --base)")
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -72,8 +78,50 @@ func run(args []string, out, errOut io.Writer) error {
 	if *jsonVersion {
 		return cliError{err: fmt.Errorf("--json requires --version")}
 	}
+	commits, err := resolveRevisionArgs(flags.Args(), base, head)
+	if err != nil {
+		return err
+	}
 
-	return analyzeWithOptions(flags.Args(), out, *fallbackToHead, *reportFormat, *outputPath)
+	return analyzeWithOptions(commits, out, *fallbackToHead, *reportFormat, *outputPath)
+}
+
+func resolveRevisionArgs(positionals []string, base, head *revisionFlag) ([]string, error) {
+	for _, arg := range positionals {
+		if isNamedRevisionArg(arg) {
+			return nil, fmt.Errorf("cannot combine --base/--head with positional revision arguments")
+		}
+	}
+	if base.set || head.set {
+		if len(positionals) != 0 {
+			return nil, fmt.Errorf("cannot combine --base/--head with positional revision arguments")
+		}
+		if !base.set || !head.set {
+			return nil, fmt.Errorf("--base and --head must be provided together")
+		}
+		return []string{base.value, head.value}, nil
+	}
+	return positionals, nil
+}
+
+func isNamedRevisionArg(arg string) bool {
+	return arg == "--base" || arg == "-base" || strings.HasPrefix(arg, "--base=") || strings.HasPrefix(arg, "-base=") ||
+		arg == "--head" || arg == "-head" || strings.HasPrefix(arg, "--head=") || strings.HasPrefix(arg, "-head=")
+}
+
+type revisionFlag struct {
+	value string
+	set   bool
+}
+
+func newRevisionFlag() *revisionFlag { return &revisionFlag{} }
+
+func (f *revisionFlag) String() string { return f.value }
+
+func (f *revisionFlag) Set(value string) error {
+	f.value = value
+	f.set = true
+	return nil
 }
 
 func writeVersion(out io.Writer, asJSON bool) error {
