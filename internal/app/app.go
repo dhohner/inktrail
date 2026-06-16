@@ -72,18 +72,32 @@ func (a App) Analyze(commits []string, out io.Writer, fallbackToHead bool) error
 	return report.WriteJSONL(out, r)
 }
 
+// ReportOptions configures report construction.
+type ReportOptions struct {
+	PathFilter report.FilterOptions
+}
+
 // BuildReport builds an impact report for staged changes, one commit, or a commit range.
 func (a App) BuildReport(commits []string, fallbackToHead bool) (report.Report, error) {
+	return a.BuildReportWithOptions(commits, fallbackToHead, ReportOptions{})
+}
+
+// BuildReportWithOptions builds an impact report for staged changes, one commit, or a commit range.
+func (a App) BuildReportWithOptions(commits []string, fallbackToHead bool, opts ReportOptions) (report.Report, error) {
 	commits, err := a.ResolveCommits(commits, fallbackToHead)
 	if err != nil {
+		return report.Report{}, err
+	}
+	if err := opts.PathFilter.Validate(); err != nil {
 		return report.Report{}, err
 	}
 	result, err := a.deps.InspectDiff(diff.Options{Commits: commits})
 	if err != nil {
 		return report.Report{}, err
 	}
+	result, _ = report.ApplyPathFilter(result, opts.PathFilter)
 	if len(result.Files) == 0 {
-		return report.Report{}, nil
+		return report.Empty(), nil
 	}
 	warnUnsupportedLanguageFiles(a.deps.Warnings, result.Files)
 
@@ -91,7 +105,7 @@ func (a App) BuildReport(commits []string, fallbackToHead bool) (report.Report, 
 	if err != nil {
 		return report.Report{}, err
 	}
-	return report.BuildWithBase(current, base, result), nil
+	return report.BuildFilteredWithBaseOptions(current, base, result, opts.PathFilter), nil
 }
 
 // ResolveCommits applies agent-safe fallback semantics to CLI commit arguments.

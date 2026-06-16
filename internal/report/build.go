@@ -6,7 +6,6 @@ import (
 
 	"github.com/dhohner/inktrail/internal/diff"
 	"github.com/dhohner/inktrail/internal/graph"
-	"github.com/dhohner/inktrail/internal/metadata"
 )
 
 func Build(g *graph.Graph, result diff.Result) Report {
@@ -14,6 +13,23 @@ func Build(g *graph.Graph, result diff.Result) Report {
 }
 
 func BuildWithBase(g, old *graph.Graph, result diff.Result) Report {
+	return BuildWithBaseOptions(g, old, result, FilterOptions{})
+}
+
+func BuildWithBaseOptions(g, old *graph.Graph, result diff.Result, opts FilterOptions) Report {
+	result, allowedPaths := filterResult(result, opts)
+	return buildWithBaseOptions(g, old, result, opts, allowedPaths)
+}
+
+func BuildFilteredWithBaseOptions(g, old *graph.Graph, result diff.Result, opts FilterOptions) Report {
+	allowedPaths := newPathSet()
+	for _, file := range result.Files {
+		allowedPaths.AddFile(file)
+	}
+	return buildWithBaseOptions(g, old, result, opts, allowedPaths)
+}
+
+func buildWithBaseOptions(g, old *graph.Graph, result diff.Result, opts FilterOptions, allowedPaths PathSet) Report {
 	movedSymbols := movedSymbols(g, old)
 	equalMoves := equalBodyMoves(movedSymbols)
 	currentMovedRanges, oldMovedRanges := movedFunctionRanges(g, old, equalMoves)
@@ -29,19 +45,7 @@ func BuildWithBase(g, old *graph.Graph, result diff.Result) Report {
 	entryPointIDs := sortedKeys(entryPoints)
 	deletedSymbols := deletedSymbols(g, old, movedOldIDs(movedSymbols))
 	removedCalls := removedCalls(g, old, movedSymbolMap(movedSymbols))
-	return Report{
-		Summary: Summary{
-			SchemaVersion:  metadata.SchemaVersion,
-			Files:          len(result.Files),
-			TestFiles:      countTestFiles(result.Files),
-			ChangedSymbols: len(changedSymbols),
-			DeletedSymbols: len(deletedSymbols),
-			MovedSymbols:   len(movedSymbols),
-			RemovedCalls:   len(removedCalls),
-			EntryPoints:    len(entryPointIDs),
-			Nodes:          len(nodes),
-			ContextRecords: contextRecordCounts(contexts),
-		},
+	report := Report{
 		Files:          result.Files,
 		ChangedSymbols: changedSymbols,
 		DeletedSymbols: deletedSymbols,
@@ -51,6 +55,13 @@ func BuildWithBase(g, old *graph.Graph, result diff.Result) Report {
 		EntryPoints:    entryPointIDs,
 		Nodes:          nodes,
 	}
+	if opts.ChangedOnly {
+		report = pruneChangedOnlyRecords(report, allowedPaths)
+	} else if opts.active() {
+		report = pruneFilteredDerivedRecords(report, allowedPaths)
+	}
+	report.Summary = summarize(report)
+	return report
 }
 
 func changedLineRangesByFunction(g *graph.Graph, lines []diff.Line) map[string][]ChangedLineRange {

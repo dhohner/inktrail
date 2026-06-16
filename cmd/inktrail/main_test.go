@@ -294,6 +294,27 @@ func TestRunFormatJSONWritesReportObject(t *testing.T) {
 	}
 }
 
+func TestRunInvalidGlobPatternDoesNotWriteStdout(t *testing.T) {
+	stubEmptyAnalysis(t)
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	err := run([]string{"--include", "["}, &out, &errOut)
+	if err == nil {
+		t.Fatal("expected invalid glob error")
+	}
+	if out.Len() != 0 {
+		t.Fatalf("stdout contaminated: %q", out.String())
+	}
+	if !strings.Contains(err.Error(), "invalid --include pattern") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var reported cliError
+	if errors.As(err, &reported) {
+		t.Fatalf("invalid glob errors must be printable by main, got cliError: %v", err)
+	}
+}
+
 func TestRunUnsupportedFormatDoesNotWriteStdout(t *testing.T) {
 	stubEmptyAnalysis(t)
 
@@ -344,6 +365,40 @@ func TestRunOutputFailureDoesNotWriteStdout(t *testing.T) {
 	}
 	if out.Len() != 0 {
 		t.Fatalf("stdout contaminated: %q", out.String())
+	}
+}
+
+func TestRunPathFilteringFlags(t *testing.T) {
+	withAnalysisDeps(t, func(opts diff.Options) (diff.Result, error) {
+		return diff.Result{Files: []diff.FileChange{
+			{Status: "modified", Path: "app.go"},
+			{Status: "modified", Path: "vendor/acme/lib.go"},
+			{Status: "modified", Path: "app_test.go", Test: true},
+		}}, nil
+	}, func(string) (*graph.Graph, error) {
+		return &graph.Graph{}, nil
+	}, func(string) (*graph.Graph, error) {
+		return &graph.Graph{}, nil
+	})
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := run([]string{"--include", "**/*.go", "--exclude", "**/*_test.go", "--exclude-vendor", "--changed-only", "--format", "json"}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Summary struct {
+			Files int `json:"files"`
+		} `json:"summary"`
+		Files []struct {
+			Path string `json:"path"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("invalid json output %q: %v", out.String(), err)
+	}
+	if got.Summary.Files != 1 || len(got.Files) != 1 || got.Files[0].Path != "app.go" {
+		t.Fatalf("unexpected filtered report: %#v", got)
 	}
 }
 

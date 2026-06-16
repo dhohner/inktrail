@@ -7,6 +7,7 @@ import (
 
 	"github.com/dhohner/inktrail/internal/diff"
 	"github.com/dhohner/inktrail/internal/graph"
+	"github.com/dhohner/inktrail/internal/report"
 )
 
 func TestAnalyzeWarnsOnceForUnsupportedChangedLanguages(t *testing.T) {
@@ -83,6 +84,35 @@ func TestAnalyzeDoesNotWarnForSupportedGoAndJavaFiles(t *testing.T) {
 	}
 	if warnings.Len() != 0 {
 		t.Fatalf("warnings=%q, want none", warnings.String())
+	}
+}
+
+func TestBuildReportWithOptionsFiltersBeforeWarningsAndGraphBuilds(t *testing.T) {
+	var warnings bytes.Buffer
+	app := New(Dependencies{
+		InspectDiff: func(diff.Options) (diff.Result, error) {
+			return diff.Result{Files: []diff.FileChange{{Status: "modified", Path: "web/app.ts"}}}, nil
+		},
+		BuildGraph: func(string) (*graph.Graph, error) {
+			t.Fatal("current graph should not be built when filters remove all files")
+			return nil, nil
+		},
+		BuildGitGraph: func(string) (*graph.Graph, error) {
+			t.Fatal("base graph should not be built when filters remove all files")
+			return nil, nil
+		},
+		Warnings: &warnings,
+	})
+
+	r, err := app.BuildReportWithOptions(nil, false, ReportOptions{PathFilter: report.FilterOptions{Include: "**/*.go"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Summary.Files != 0 {
+		t.Fatalf("summary files=%d, want 0", r.Summary.Files)
+	}
+	if warnings.Len() != 0 {
+		t.Fatalf("warnings for excluded file: %q", warnings.String())
 	}
 }
 

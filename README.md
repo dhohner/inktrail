@@ -26,6 +26,26 @@ go run ./cmd/inktrail HEAD                    # one commit
 go run ./cmd/inktrail main feature            # commit range
 go run ./cmd/inktrail --base main --head feature # named commit range
 go run ./cmd/inktrail --fallback-to-head      # staged diff, or HEAD when clean and nothing is staged
+go run ./cmd/inktrail --include 'internal/**/*.go'
+go run ./cmd/inktrail --exclude '**/*_test.go' --exclude-vendor
+go run ./cmd/inktrail --changed-only
+```
+
+## Path filtering
+
+Use path filters to narrow the changed files that seed the report before symbol, context, and graph records are built.
+
+- `--include <glob>` keeps only changed paths that match the glob.
+- `--exclude <glob>` removes changed paths that match the glob. Repeat it to exclude multiple patterns.
+- `--exclude-vendor` removes vendor-scoped paths such as `vendor/`, `node_modules/`, `third_party/`, `dist/`, and `build/`.
+- `--changed-only` limits emitted context to changed files. Without `--changed-only`, include and exclude filters still allow related callers, callees, entry points, and graph nodes when they explain included changed files.
+
+Glob matching is slash-normalized and supports recursive `**` segments. For example, `**/*_test.go` matches test files at any depth.
+
+```sh
+go run ./cmd/inktrail --include 'internal/**/*.go'
+go run ./cmd/inktrail --exclude '**/*_test.go' --exclude 'vendor/**'
+go run ./cmd/inktrail --include 'service/**' --changed-only
 ```
 
 ## Output format

@@ -52,9 +52,17 @@ func run(args []string, out, errOut io.Writer) error {
 		fmt.Fprintln(flags.Output(), "Usage of inktrail:")
 		fmt.Fprintln(flags.Output(), "  inktrail --version [--json]")
 		fmt.Fprintln(flags.Output(), "  inktrail [--fallback-to-head] [--format jsonl|json] [--output <path>]")
+		fmt.Fprintln(flags.Output(), "  inktrail [--include <glob>] [--exclude <glob>] [--exclude-vendor] [--changed-only]")
 		fmt.Fprintln(flags.Output(), "  inktrail <commit>")
 		fmt.Fprintln(flags.Output(), "  inktrail <base> <head>")
 		fmt.Fprintln(flags.Output(), "  inktrail --base <ref> --head <ref>")
+		fmt.Fprintln(flags.Output())
+		fmt.Fprintln(flags.Output(), "Examples:")
+		fmt.Fprintln(flags.Output(), "  inktrail --include 'internal/**/*.go'")
+		fmt.Fprintln(flags.Output(), "  inktrail --exclude '**/*_test.go' --exclude-vendor")
+		fmt.Fprintln(flags.Output(), "  inktrail --changed-only")
+		fmt.Fprintln(flags.Output())
+		flags.PrintDefaults()
 	}
 	fallbackToHead := flags.Bool("fallback-to-head", false, "analyze HEAD when no commits are provided, the worktree is clean, and nothing is staged")
 	reportFormat := flags.String("format", "jsonl", "report format: jsonl or json")
@@ -63,6 +71,11 @@ func run(args []string, out, errOut io.Writer) error {
 	jsonVersion := flags.Bool("json", false, "print version metadata as JSON (with --version)")
 	base := newRevisionFlag()
 	head := newRevisionFlag()
+	excludes := newStringListFlag()
+	include := flags.String("include", "", "limit report to changed paths matching glob pattern")
+	excludeVendor := flags.Bool("exclude-vendor", false, "exclude vendor-scoped files from report consideration")
+	changedOnly := flags.Bool("changed-only", false, "limit emitted context to changed files")
+	flags.Var(excludes, "exclude", "exclude changed paths matching glob pattern (repeatable)")
 	flags.Var(base, "base", "base revision for range analysis (requires --head)")
 	flags.Var(head, "head", "head revision for range analysis (requires --base)")
 	if err := flags.Parse(args); err != nil {
@@ -83,7 +96,16 @@ func run(args []string, out, errOut io.Writer) error {
 		return err
 	}
 
-	return analyzeWithOptions(commits, out, *fallbackToHead, *reportFormat, *outputPath)
+	filters := report.FilterOptions{
+		Include:       *include,
+		Excludes:      excludes.values,
+		ExcludeVendor: *excludeVendor,
+		ChangedOnly:   *changedOnly,
+	}
+	if err := filters.Validate(); err != nil {
+		return err
+	}
+	return analyzeWithOptions(commits, out, *fallbackToHead, *reportFormat, *outputPath, filters)
 }
 
 func resolveRevisionArgs(positionals []string, base, head *revisionFlag) ([]string, error) {
@@ -107,6 +129,19 @@ func resolveRevisionArgs(positionals []string, base, head *revisionFlag) ([]stri
 func isNamedRevisionArg(arg string) bool {
 	return arg == "--base" || arg == "-base" || strings.HasPrefix(arg, "--base=") || strings.HasPrefix(arg, "-base=") ||
 		arg == "--head" || arg == "-head" || strings.HasPrefix(arg, "--head=") || strings.HasPrefix(arg, "-head=")
+}
+
+type stringListFlag struct {
+	values []string
+}
+
+func newStringListFlag() *stringListFlag { return &stringListFlag{} }
+
+func (f *stringListFlag) String() string { return strings.Join(f.values, ",") }
+
+func (f *stringListFlag) Set(value string) error {
+	f.values = append(f.values, value)
+	return nil
 }
 
 type revisionFlag struct {
@@ -136,10 +171,10 @@ func writeVersion(out io.Writer, asJSON bool) error {
 }
 
 func analyze(commits []string, out io.Writer, fallbackToHead bool) error {
-	return analyzeWithOptions(commits, out, fallbackToHead, "jsonl", "")
+	return analyzeWithOptions(commits, out, fallbackToHead, "jsonl", "", report.FilterOptions{})
 }
 
-func analyzeWithOptions(commits []string, out io.Writer, fallbackToHead bool, format, outputPath string) error {
+func analyzeWithOptions(commits []string, out io.Writer, fallbackToHead bool, format, outputPath string, filters report.FilterOptions) error {
 	writeReport, err := writerForFormat(format)
 	if err != nil {
 		return cliError{err: err}
@@ -154,7 +189,7 @@ func analyzeWithOptions(commits []string, out io.Writer, fallbackToHead bool, fo
 		defer file.Close()
 		target = file
 	}
-	r, err := newApp().BuildReport(commits, fallbackToHead)
+	r, err := newApp().BuildReportWithOptions(commits, fallbackToHead, app.ReportOptions{PathFilter: filters})
 	if err != nil {
 		return err
 	}
