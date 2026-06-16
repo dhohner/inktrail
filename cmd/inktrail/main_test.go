@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -234,14 +235,7 @@ func TestRunVersionJSONWritesMetadataObject(t *testing.T) {
 }
 
 func TestRunWritesJSONL(t *testing.T) {
-	withChangeDetectors(t, boolFunc(true), nil)
-	withAnalysisDeps(t, func(opts diff.Options) (diff.Result, error) {
-		return diff.Result{}, nil
-	}, func(string) (*graph.Graph, error) {
-		return &graph.Graph{}, nil
-	}, func(string) (*graph.Graph, error) {
-		return &graph.Graph{}, nil
-	})
+	stubEmptyAnalysis(t)
 
 	var out bytes.Buffer
 	var errOut bytes.Buffer
@@ -253,6 +247,100 @@ func TestRunWritesJSONL(t *testing.T) {
 	}
 	if !strings.HasPrefix(out.String(), "{\"type\":\"summary\"") {
 		t.Fatalf("stdout is not clean JSONL: %q", out.String())
+	}
+}
+
+func TestRunFormatJSONLWritesSameAsDefault(t *testing.T) {
+	stubEmptyAnalysis(t)
+
+	var defaultOut bytes.Buffer
+	var jsonlOut bytes.Buffer
+	var errOut bytes.Buffer
+	if err := run(nil, &defaultOut, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"--format", "jsonl"}, &jsonlOut, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	if defaultOut.String() != jsonlOut.String() {
+		t.Fatalf("jsonl output differs from default:\ndefault=%q\njsonl=%q", defaultOut.String(), jsonlOut.String())
+	}
+}
+
+func TestRunFormatJSONWritesReportObject(t *testing.T) {
+	stubEmptyAnalysis(t)
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := run([]string{"--format", "json"}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		SchemaVersion string `json:"schema_version"`
+		Summary       struct {
+			SchemaVersion string `json:"schema_version"`
+			Files         int    `json:"files"`
+		} `json:"summary"`
+		Files []json.RawMessage `json:"files"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("invalid json output %q: %v", out.String(), err)
+	}
+	if got.SchemaVersion != "1.0" || got.Summary.SchemaVersion != "1.0" || got.Summary.Files != 0 || len(got.Files) != 0 {
+		t.Fatalf("unexpected json report: %#v", got)
+	}
+}
+
+func TestRunUnsupportedFormatDoesNotWriteStdout(t *testing.T) {
+	stubEmptyAnalysis(t)
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	err := run([]string{"--format", "xml"}, &out, &errOut)
+	if err == nil {
+		t.Fatal("expected unsupported format error")
+	}
+	if out.Len() != 0 {
+		t.Fatalf("stdout contaminated: %q", out.String())
+	}
+	if !strings.Contains(err.Error(), "unsupported format") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunOutputWritesFileAndLeavesStdoutEmpty(t *testing.T) {
+	stubEmptyAnalysis(t)
+	path := t.TempDir() + "/report.json"
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := run([]string{"--format", "json", "--output", path}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("stdout got report data: %q", out.String())
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid(data) || !strings.Contains(string(data), "\"schema_version\":\"1.0\"") {
+		t.Fatalf("unexpected output file: %q", string(data))
+	}
+}
+
+func TestRunOutputFailureDoesNotWriteStdout(t *testing.T) {
+	stubEmptyAnalysis(t)
+	path := t.TempDir() + "/missing/report.json"
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	err := run([]string{"--output", path}, &out, &errOut)
+	if err == nil {
+		t.Fatal("expected output error")
+	}
+	if out.Len() != 0 {
+		t.Fatalf("stdout contaminated: %q", out.String())
 	}
 }
 
@@ -283,6 +371,18 @@ func TestAnalyzePassesExplicitRangeAndUsesRangeBase(t *testing.T) {
 
 func boolFunc(v bool) func() (bool, error) {
 	return func() (bool, error) { return v, nil }
+}
+
+func stubEmptyAnalysis(t *testing.T) {
+	t.Helper()
+	withChangeDetectors(t, boolFunc(true), nil)
+	withAnalysisDeps(t, func(opts diff.Options) (diff.Result, error) {
+		return diff.Result{}, nil
+	}, func(string) (*graph.Graph, error) {
+		return &graph.Graph{}, nil
+	}, func(string) (*graph.Graph, error) {
+		return &graph.Graph{}, nil
+	})
 }
 
 func withChangeDetectors(t *testing.T, staged, unstaged func() (bool, error)) {
