@@ -10,6 +10,7 @@ import (
 type Object struct {
 	SchemaVersion  string               `json:"schema_version"`
 	Summary        Summary              `json:"summary"`
+	Warnings       []Warning            `json:"warnings,omitempty"`
 	Files          []FileRecord         `json:"files"`
 	ChangedSymbols []string             `json:"changed_symbols"`
 	DeletedSymbols []string             `json:"deleted_symbols"`
@@ -37,6 +38,14 @@ func writeJSONLWithOptions(w io.Writer, r Report, opts SizeOptions) error {
 		Summary
 	}{Type: "summary", Summary: r.Summary}); err != nil {
 		return err
+	}
+	for _, warning := range r.Warnings {
+		if err := enc.Encode(struct {
+			Type string `json:"type"`
+			Warning
+		}{Type: "warning", Warning: warning}); err != nil {
+			return err
+		}
 	}
 	fileSymbols := fileSymbolsForReport(r)
 	for _, file := range r.Files {
@@ -131,6 +140,7 @@ func toObjectWithOptions(r Report, opts SizeOptions) Object {
 	return Object{
 		SchemaVersion:  r.Summary.SchemaVersion,
 		Summary:        r.Summary,
+		Warnings:       cloneWarnings(r.Warnings),
 		Files:          files,
 		ChangedSymbols: cloneStrings(r.ChangedSymbols),
 		DeletedSymbols: cloneStrings(r.DeletedSymbols),
@@ -151,6 +161,10 @@ func fileSymbolsForReport(r Report) map[string][]string {
 
 func cloneStrings(in []string) []string {
 	return append([]string{}, in...)
+}
+
+func cloneWarnings(in []Warning) []Warning {
+	return append([]Warning{}, in...)
 }
 
 func cloneDeclarationContexts(in []DeclarationContext) []DeclarationContext {

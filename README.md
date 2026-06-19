@@ -26,6 +26,7 @@ go run ./cmd/inktrail HEAD                    # one commit
 go run ./cmd/inktrail main feature            # commit range
 go run ./cmd/inktrail --base main --head feature # named commit range
 go run ./cmd/inktrail --fallback-to-head      # staged diff, or HEAD when clean and nothing is staged
+go run ./cmd/inktrail --best-effort          # emit partial records plus structured warnings for analysis gaps
 go run ./cmd/inktrail --include 'internal/**/*.go'
 go run ./cmd/inktrail --exclude '**/*_test.go' --exclude-vendor
 go run ./cmd/inktrail --changed-only
@@ -64,7 +65,9 @@ When records must be omitted, Inktrail preserves the summary first, then higher-
 
 Output is JSONL: one compact JSON object per line. The first record is always `summary`, followed by zero or more detail records.
 
-Declaration context records are emitted by default when supported Go or Java analysis can identify relevant declarations. They are additive to the existing stream: consumers that only need file, symbol, or graph records can ignore unknown record types and continue processing the report. Context records are factual source/declaration excerpts, not review guidance, risk scoring, policy advice, or semantic framework analysis.
+Strict analysis is the default: unsupported production languages, parse errors, and graph build errors fail the invocation. Use `--best-effort` when partial output is acceptable; Inktrail then emits available report records plus machine-readable `warning` records.
+
+Declaration context and warning records are additive to the existing stream: consumers that only need file, symbol, or graph records can ignore unknown record types and continue processing the report. Context records are factual source/declaration excerpts, not review guidance, risk scoring, policy advice, or semantic framework analysis.
 
 ### Record types
 
@@ -72,6 +75,7 @@ Declaration context records are emitted by default when supported Go or Java ana
   - `context_records.total`: total emitted context records.
   - `context_records.declaration_context`: changed-declaration context records.
   - `context_records.related_declaration_context`: unchanged declarations directly related to changed declarations.
+- `warning`: best-effort analysis warning with stable `code`, human-readable `message`, and optional `path` or `symbol` context. Current codes include `unsupported_language`, `parse_error`, and `graph_build_failed`.
 - `file`: changed file metadata and changed hunks.
   - `status`: `added`, `modified`, `deleted`, or `renamed`.
   - `old_path`: source path for renamed or deleted files when available.
@@ -144,7 +148,7 @@ Graph scope:
 Declaration context scope:
 
 - Rich symbol-level context is available for supported Go and Java production analysis.
-- Unsupported languages still emit `file` records with file metadata, hunks when compact enough, and `content_ref` for lazy workspace reads. They do not emit symbol-level declaration context.
+- With `--best-effort`, unsupported languages still emit `file` records with file metadata, hunks when compact enough, `content_ref` for lazy workspace reads, and `warning` records. They do not emit symbol-level declaration context.
 - Context excerpts are bounded to keep reports compact. When an excerpt is truncated, `excerpt.truncated` is `true` and `excerpt.omitted_lines` reports how many lines were left out.
 - Large added, generated, vendor, binary, or otherwise compacted file records may omit hunks or previews as described above; declaration context is not emitted for compacted added files.
 
@@ -157,7 +161,7 @@ Java scope:
 
 Skipped for symbol and call analysis:
 
-- unsupported languages: emitted as `file` records only; Inktrail writes one stderr warning per run and keeps JSONL output on stdout clean
+- unsupported languages: fail by default for production files; with `--best-effort`, emitted as `file` records plus structured `warning` records
 - test-only code: `*_test.go`, `test/`, `tests/`, `testdata/`, and Java test source sets listed above
 - vendor directories
 - blank added lines

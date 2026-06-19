@@ -120,6 +120,13 @@ type Omission struct {
 	OmittedCount  int    `json:"omitted_count"`
 }
 
+type Warning struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Path    string `json:"path,omitempty"`
+	Symbol  string `json:"symbol,omitempty"`
+}
+
 type Summary struct {
 	SchemaVersion  string              `json:"schema_version"`
 	Files          int                 `json:"files"`
@@ -136,6 +143,7 @@ type Summary struct {
 
 type Report struct {
 	Summary        Summary              `json:"summary"`
+	Warnings       []Warning            `json:"warnings,omitempty"`
 	Files          []diff.FileChange    `json:"files"`
 	ChangedSymbols []string             `json:"changed_symbols"`
 	DeletedSymbols []string             `json:"deleted_symbols"`

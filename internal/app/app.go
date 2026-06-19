@@ -3,7 +3,7 @@ package app
 import (
 	"fmt"
 	"io"
-	"os"
+	"strings"
 
 	"github.com/dhohner/inktrail/internal/diff"
 	"github.com/dhohner/inktrail/internal/graph"
@@ -19,7 +19,6 @@ type Dependencies struct {
 	InspectDiff        func(diff.Options) (diff.Result, error)
 	BuildGraph         func(string) (*graph.Graph, error)
 	BuildGitGraph      func(string) (*graph.Graph, error)
-	Warnings           io.Writer
 }
 
 // DefaultDependencies returns the production git, diff, and graph implementations.
@@ -30,7 +29,6 @@ func DefaultDependencies() Dependencies {
 		InspectDiff:        diff.Inspect,
 		BuildGraph:         graph.Build,
 		BuildGitGraph:      graph.BuildGit,
-		Warnings:           os.Stderr,
 	}
 }
 
@@ -57,9 +55,6 @@ func New(deps Dependencies) App {
 	if deps.BuildGitGraph == nil {
 		deps.BuildGitGraph = defaults.BuildGitGraph
 	}
-	if deps.Warnings == nil {
-		deps.Warnings = defaults.Warnings
-	}
 	return App{deps: deps}
 }
 
@@ -76,6 +71,7 @@ func (a App) Analyze(commits []string, out io.Writer, fallbackToHead bool) error
 type ReportOptions struct {
 	PathFilter report.FilterOptions
 	Size       report.SizeOptions
+	BestEffort bool
 }
 
 // BuildReport builds an impact report for staged changes, one commit, or a commit range.
@@ -103,13 +99,19 @@ func (a App) BuildReportWithOptions(commits []string, fallbackToHead bool, opts 
 	if len(result.Files) == 0 {
 		return report.Empty(), nil
 	}
-	warnUnsupportedLanguageFiles(a.deps.Warnings, result.Files)
+	unsupportedWarnings := unsupportedLanguageWarnings(result.Files)
+	if len(unsupportedWarnings) > 0 && !opts.BestEffort {
+		return report.Report{}, fmt.Errorf("unsupported production language in %s (use --best-effort to emit partial report with warnings)", unsupportedWarnings[0].Path)
+	}
 
-	current, base, err := a.buildGraphs(baseRef(commits))
+	current, base, graphWarnings, err := a.buildGraphs(baseRef(commits), opts.BestEffort)
 	if err != nil {
 		return report.Report{}, err
 	}
-	return report.BuildFilteredWithBaseOptions(current, base, result, opts.PathFilter), nil
+	r := report.BuildFilteredWithBaseOptions(current, base, result, opts.PathFilter)
+	r.Warnings = append(r.Warnings, unsupportedWarnings...)
+	r.Warnings = append(r.Warnings, graphWarnings...)
+	return r, nil
 }
 
 // ResolveCommits applies agent-safe fallback semantics to CLI commit arguments.
@@ -134,32 +136,47 @@ func (a App) ResolveCommits(commits []string, fallbackToHead bool) ([]string, er
 	return []string{"HEAD"}, nil
 }
 
-func (a App) buildGraphs(base string) (*graph.Graph, *graph.Graph, error) {
-	type result struct {
-		graph *graph.Graph
-		err   error
-	}
+type graphBuildResult struct {
+	graph *graph.Graph
+	err   error
+	which string
+}
 
-	currentCh := make(chan result, 1)
-	baseCh := make(chan result, 1)
+func (a App) buildGraphs(base string, bestEffort bool) (*graph.Graph, *graph.Graph, []report.Warning, error) {
+	currentCh := make(chan graphBuildResult, 1)
+	baseCh := make(chan graphBuildResult, 1)
 	go func() {
 		g, err := a.deps.BuildGraph(".")
-		currentCh <- result{graph: g, err: err}
+		currentCh <- graphBuildResult{graph: g, err: err, which: "current"}
 	}()
 	go func() {
 		g, err := a.deps.BuildGitGraph(base)
-		baseCh <- result{graph: g, err: err}
+		baseCh <- graphBuildResult{graph: g, err: err, which: "base"}
 	}()
 
 	current := <-currentCh
 	baseResult := <-baseCh
-	if current.err != nil {
-		return nil, nil, current.err
+	if !bestEffort {
+		if current.err != nil {
+			return nil, nil, nil, current.err
+		}
+		if baseResult.err != nil {
+			return nil, nil, nil, baseResult.err
+		}
+		return current.graph, baseResult.graph, nil, nil
 	}
-	if baseResult.err != nil {
-		return nil, nil, baseResult.err
+	warnings := graphBuildWarnings(current, baseResult)
+	if current.err != nil || current.graph == nil {
+		// Without a current graph, old/current comparisons would otherwise make
+		// every base symbol look deleted. Keep only file-level data in this case.
+		current.graph = emptyAnalysisGraph()
+		baseResult.graph = emptyAnalysisGraph()
+		return current.graph, baseResult.graph, warnings, nil
 	}
-	return current.graph, baseResult.graph, nil
+	if baseResult.err != nil || baseResult.graph == nil {
+		baseResult.graph = emptyAnalysisGraph()
+	}
+	return current.graph, baseResult.graph, warnings, nil
 }
 
 func baseRef(args []string) string {
@@ -173,10 +190,8 @@ func baseRef(args []string) string {
 	}
 }
 
-func warnUnsupportedLanguageFiles(w io.Writer, files []diff.FileChange) {
-	if w == nil {
-		return
-	}
+func unsupportedLanguageWarnings(files []diff.FileChange) []report.Warning {
+	var warnings []report.Warning
 	for _, file := range files {
 		if file.Test {
 			continue
@@ -189,8 +204,41 @@ func warnUnsupportedLanguageFiles(w io.Writer, files []diff.FileChange) {
 			continue
 		}
 		if _, ok := parser.LanguageForPath(path); !ok {
-			fmt.Fprintln(w, "inktrail: unsupported changed file languages skipped for symbol and call graph analysis; file records will still be emitted")
-			return
+			warnings = append(warnings, report.Warning{Code: "unsupported_language", Path: path, Message: "unsupported production language skipped for symbol and call graph analysis"})
 		}
 	}
+	return warnings
+}
+
+func graphBuildWarnings(results ...graphBuildResult) []report.Warning {
+	var warnings []report.Warning
+	for _, result := range results {
+		if result.err == nil {
+			continue
+		}
+		warnings = append(warnings, report.Warning{Code: graphBuildWarningCode(result.err), Path: graphBuildWarningPath(result.err), Message: fmt.Sprintf("%s graph build failed: %v", result.which, result.err)})
+	}
+	return warnings
+}
+
+func graphBuildWarningCode(err error) string {
+	if strings.HasPrefix(err.Error(), "parse ") || strings.Contains(err.Error(), ": syntax error") {
+		return "parse_error"
+	}
+	return "graph_build_failed"
+}
+
+func graphBuildWarningPath(err error) string {
+	msg := err.Error()
+	if strings.HasPrefix(msg, "parse ") {
+		rest := strings.TrimPrefix(msg, "parse ")
+		if idx := strings.Index(rest, ":"); idx >= 0 {
+			return rest[:idx]
+		}
+	}
+	return ""
+}
+
+func emptyAnalysisGraph() *graph.Graph {
+	return &graph.Graph{Functions: map[string]graph.Function{}, Calls: map[string]map[string]bool{}, Callers: map[string]map[string]bool{}, CallSites: map[string]map[string]graph.CallSite{}}
 }

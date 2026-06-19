@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 
@@ -10,40 +11,54 @@ import (
 	"github.com/dhohner/inktrail/internal/report"
 )
 
-func TestAnalyzeWarnsOnceForUnsupportedChangedLanguages(t *testing.T) {
-	var out bytes.Buffer
-	var warnings bytes.Buffer
+func TestBuildReportFailsByDefaultForUnsupportedChangedLanguages(t *testing.T) {
 	app := New(Dependencies{
 		InspectDiff: func(diff.Options) (diff.Result, error) {
 			return diff.Result{Files: []diff.FileChange{
 				{Status: "modified", Path: "cmd/app.go"},
-				{Status: "modified", Path: "src/Main.java"},
+				{Status: "modified", Path: "web/app.ts"},
+			}}, nil
+		},
+		BuildGraph:    emptyGraph,
+		BuildGitGraph: emptyGraph,
+	})
+
+	_, err := app.BuildReportWithOptions(nil, false, ReportOptions{})
+	if err == nil || !strings.Contains(err.Error(), "unsupported production language") {
+		t.Fatalf("err=%v, want unsupported production language", err)
+	}
+}
+
+func TestBestEffortEmitsUnsupportedLanguageWarnings(t *testing.T) {
+	app := New(Dependencies{
+		InspectDiff: func(diff.Options) (diff.Result, error) {
+			return diff.Result{Files: []diff.FileChange{
+				{Status: "modified", Path: "cmd/app.go"},
 				{Status: "modified", Path: "web/app.ts"},
 				{Status: "modified", Path: "docs/readme.md"},
 			}}, nil
 		},
 		BuildGraph:    emptyGraph,
 		BuildGitGraph: emptyGraph,
-		Warnings:      &warnings,
 	})
 
-	if err := app.Analyze(nil, &out, false); err != nil {
+	r, err := app.BuildReportWithOptions(nil, false, ReportOptions{BestEffort: true})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Count(warnings.String(), "unsupported changed file languages skipped"); got != 1 {
-		t.Fatalf("warning count=%d, warnings=%q", got, warnings.String())
+	if len(r.Warnings) != 2 {
+		t.Fatalf("warnings=%#v, want two unsupported language warnings", r.Warnings)
 	}
-	if strings.Contains(out.String(), "unsupported changed file languages") {
-		t.Fatalf("warning leaked into JSONL stdout: %q", out.String())
+	if r.Warnings[0].Code != "unsupported_language" || r.Warnings[0].Path != "web/app.ts" {
+		t.Fatalf("first warning=%#v", r.Warnings[0])
 	}
-	if got := strings.Count(out.String(), "\n"); got != 5 {
-		t.Fatalf("JSONL line count=%d, output=%q", got, out.String())
+	if r.Summary.Files != 3 {
+		t.Fatalf("summary files=%d, want 3", r.Summary.Files)
 	}
 }
 
 func TestAnalyzeDoesNotWarnForUnsupportedTestOnlyFiles(t *testing.T) {
 	var out bytes.Buffer
-	var warnings bytes.Buffer
 	app := New(Dependencies{
 		InspectDiff: func(diff.Options) (diff.Result, error) {
 			return diff.Result{Files: []diff.FileChange{
@@ -53,20 +68,18 @@ func TestAnalyzeDoesNotWarnForUnsupportedTestOnlyFiles(t *testing.T) {
 		},
 		BuildGraph:    emptyGraph,
 		BuildGitGraph: emptyGraph,
-		Warnings:      &warnings,
 	})
 
 	if err := app.Analyze(nil, &out, false); err != nil {
 		t.Fatal(err)
 	}
-	if warnings.Len() != 0 {
-		t.Fatalf("warnings=%q, want none", warnings.String())
+	if strings.Contains(out.String(), "\"type\":\"warning\"") {
+		t.Fatalf("warning record in output: %q", out.String())
 	}
 }
 
 func TestAnalyzeDoesNotWarnForSupportedGoAndJavaFiles(t *testing.T) {
 	var out bytes.Buffer
-	var warnings bytes.Buffer
 	app := New(Dependencies{
 		InspectDiff: func(diff.Options) (diff.Result, error) {
 			return diff.Result{Files: []diff.FileChange{
@@ -76,19 +89,17 @@ func TestAnalyzeDoesNotWarnForSupportedGoAndJavaFiles(t *testing.T) {
 		},
 		BuildGraph:    emptyGraph,
 		BuildGitGraph: emptyGraph,
-		Warnings:      &warnings,
 	})
 
 	if err := app.Analyze(nil, &out, false); err != nil {
 		t.Fatal(err)
 	}
-	if warnings.Len() != 0 {
-		t.Fatalf("warnings=%q, want none", warnings.String())
+	if strings.Contains(out.String(), "\"type\":\"warning\"") {
+		t.Fatalf("warning record in output: %q", out.String())
 	}
 }
 
 func TestBuildReportWithOptionsFiltersBeforeWarningsAndGraphBuilds(t *testing.T) {
-	var warnings bytes.Buffer
 	app := New(Dependencies{
 		InspectDiff: func(diff.Options) (diff.Result, error) {
 			return diff.Result{Files: []diff.FileChange{{Status: "modified", Path: "web/app.ts"}}}, nil
@@ -101,7 +112,6 @@ func TestBuildReportWithOptionsFiltersBeforeWarningsAndGraphBuilds(t *testing.T)
 			t.Fatal("base graph should not be built when filters remove all files")
 			return nil, nil
 		},
-		Warnings: &warnings,
 	})
 
 	r, err := app.BuildReportWithOptions(nil, false, ReportOptions{PathFilter: report.FilterOptions{Include: "**/*.go"}})
@@ -111,8 +121,56 @@ func TestBuildReportWithOptionsFiltersBeforeWarningsAndGraphBuilds(t *testing.T)
 	if r.Summary.Files != 0 {
 		t.Fatalf("summary files=%d, want 0", r.Summary.Files)
 	}
-	if warnings.Len() != 0 {
-		t.Fatalf("warnings for excluded file: %q", warnings.String())
+	if len(r.Warnings) != 0 {
+		t.Fatalf("warnings for excluded file: %#v", r.Warnings)
+	}
+}
+
+func TestBuildReportFailsByDefaultForGraphBuildErrors(t *testing.T) {
+	app := New(Dependencies{
+		InspectDiff: func(diff.Options) (diff.Result, error) {
+			return diff.Result{Files: []diff.FileChange{{Status: "modified", Path: "cmd/app.go"}}}, nil
+		},
+		BuildGraph: func(string) (*graph.Graph, error) {
+			return nil, errors.New("parse cmd/app.go: syntax error")
+		},
+		BuildGitGraph: emptyGraph,
+	})
+
+	_, err := app.BuildReportWithOptions(nil, false, ReportOptions{})
+	if err == nil || !strings.Contains(err.Error(), "syntax error") {
+		t.Fatalf("err=%v, want syntax error", err)
+	}
+}
+
+func TestBestEffortEmitsGraphBuildWarnings(t *testing.T) {
+	app := New(Dependencies{
+		InspectDiff: func(diff.Options) (diff.Result, error) {
+			return diff.Result{Files: []diff.FileChange{{Status: "modified", Path: "cmd/app.go"}}}, nil
+		},
+		BuildGraph: func(string) (*graph.Graph, error) {
+			return nil, errors.New("parse cmd/app.go: syntax error")
+		},
+		BuildGitGraph: func(string) (*graph.Graph, error) {
+			return nil, errors.New("index failed")
+		},
+	})
+
+	r, err := app.BuildReportWithOptions(nil, false, ReportOptions{BestEffort: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Warnings) != 2 {
+		t.Fatalf("warnings=%#v, want 2", r.Warnings)
+	}
+	if r.Warnings[0].Code != "parse_error" || r.Warnings[0].Path != "cmd/app.go" {
+		t.Fatalf("parse warning=%#v", r.Warnings[0])
+	}
+	if r.Warnings[1].Code != "graph_build_failed" {
+		t.Fatalf("graph warning=%#v", r.Warnings[1])
+	}
+	if r.Summary.Files != 1 {
+		t.Fatalf("summary files=%d, want 1", r.Summary.Files)
 	}
 }
 

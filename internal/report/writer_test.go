@@ -32,6 +32,27 @@ func TestWriteJSONLWritesOneRecordPerLine(t *testing.T) {
 	}
 }
 
+func TestWriteJSONLEmitsWarningRecords(t *testing.T) {
+	r := Report{Warnings: []Warning{{Code: "parse_error", Path: "app.go", Message: "current graph build failed: parse app.go: syntax error"}}}
+	var buf bytes.Buffer
+
+	if err := WriteJSONL(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+
+	var records []map[string]any
+	for _, line := range bytes.Split(bytes.TrimSpace(buf.Bytes()), []byte("\n")) {
+		var record map[string]any
+		if err := json.Unmarshal(line, &record); err != nil {
+			t.Fatal(err)
+		}
+		records = append(records, record)
+	}
+	if len(records) != 2 || records[1]["type"] != "warning" || records[1]["code"] != "parse_error" || records[1]["path"] != "app.go" {
+		t.Fatalf("records=%#v", records)
+	}
+}
+
 func TestWriteJSONLCompactsLargeAddedFiles(t *testing.T) {
 	var lines []diff.HunkLine
 	for i := 1; i <= 301; i++ {

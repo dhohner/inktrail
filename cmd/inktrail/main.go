@@ -51,7 +51,7 @@ func run(args []string, out, errOut io.Writer) error {
 	flags.Usage = func() {
 		fmt.Fprintln(flags.Output(), "Usage of inktrail:")
 		fmt.Fprintln(flags.Output(), "  inktrail --version [--json]")
-		fmt.Fprintln(flags.Output(), "  inktrail [--fallback-to-head] [--format jsonl|json] [--output <path>]")
+		fmt.Fprintln(flags.Output(), "  inktrail [--fallback-to-head] [--best-effort] [--format jsonl|json] [--output <path>]")
 		fmt.Fprintln(flags.Output(), "  inktrail [--include <glob>] [--exclude <glob>] [--exclude-vendor] [--changed-only]")
 		fmt.Fprintln(flags.Output(), "  inktrail [--max-lines-per-hunk N] [--max-context-lines N] [--max-records N] [--budget-tokens N]")
 		fmt.Fprintln(flags.Output(), "  inktrail <commit>")
@@ -66,6 +66,7 @@ func run(args []string, out, errOut io.Writer) error {
 		flags.PrintDefaults()
 	}
 	fallbackToHead := flags.Bool("fallback-to-head", false, "analyze HEAD when no commits are provided, the worktree is clean, and nothing is staged")
+	bestEffort := flags.Bool("best-effort", false, "emit partial report records with structured warning records instead of failing on analysis gaps")
 	reportFormat := flags.String("format", "jsonl", "report format: jsonl or json")
 	outputPath := flags.String("output", "", "write report to path instead of stdout")
 	showVersion := flags.Bool("version", false, "print version metadata and exit")
@@ -114,7 +115,7 @@ func run(args []string, out, errOut io.Writer) error {
 	if err := size.Validate(); err != nil {
 		return err
 	}
-	return analyzeWithOptions(commits, out, *fallbackToHead, *reportFormat, *outputPath, filters, size)
+	return analyzeWithOptions(commits, out, *fallbackToHead, *bestEffort, *reportFormat, *outputPath, filters, size)
 }
 
 func resolveRevisionArgs(positionals []string, base, head *revisionFlag) ([]string, error) {
@@ -180,10 +181,10 @@ func writeVersion(out io.Writer, asJSON bool) error {
 }
 
 func analyze(commits []string, out io.Writer, fallbackToHead bool) error {
-	return analyzeWithOptions(commits, out, fallbackToHead, "jsonl", "", report.FilterOptions{}, report.SizeOptions{})
+	return analyzeWithOptions(commits, out, fallbackToHead, false, "jsonl", "", report.FilterOptions{}, report.SizeOptions{})
 }
 
-func analyzeWithOptions(commits []string, out io.Writer, fallbackToHead bool, format, outputPath string, filters report.FilterOptions, size report.SizeOptions) error {
+func analyzeWithOptions(commits []string, out io.Writer, fallbackToHead, bestEffort bool, format, outputPath string, filters report.FilterOptions, size report.SizeOptions) error {
 	writeReport, err := writerForFormat(format)
 	if err != nil {
 		return cliError{err: err}
@@ -198,7 +199,7 @@ func analyzeWithOptions(commits []string, out io.Writer, fallbackToHead bool, fo
 		defer file.Close()
 		target = file
 	}
-	r, err := newApp().BuildReportWithOptions(commits, fallbackToHead, app.ReportOptions{PathFilter: filters, Size: size})
+	r, err := newApp().BuildReportWithOptions(commits, fallbackToHead, app.ReportOptions{PathFilter: filters, Size: size, BestEffort: bestEffort})
 	if err != nil {
 		return err
 	}
