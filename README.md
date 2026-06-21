@@ -8,7 +8,7 @@
 go run ./cmd/inktrail
 ```
 
-`inktrail` always writes JSONL to stdout. With no arguments it analyzes the staged diff.
+`inktrail` writes JSONL to stdout by default. With no arguments it analyzes the staged diff.
 
 To analyze `HEAD` when there is no staged diff and the worktree is clean, use `--fallback-to-head`:
 
@@ -27,11 +27,43 @@ go run ./cmd/inktrail main feature            # commit range
 go run ./cmd/inktrail --base main --head feature # named commit range
 go run ./cmd/inktrail --fallback-to-head      # staged diff, or HEAD when clean and nothing is staged
 go run ./cmd/inktrail --best-effort          # emit partial records plus structured warnings for analysis gaps
+go run ./cmd/inktrail --review-summary       # add a compact agent-targeted review summary record
 go run ./cmd/inktrail --include 'internal/**/*.go'
 go run ./cmd/inktrail --exclude '**/*_test.go' --exclude-vendor
 go run ./cmd/inktrail --changed-only
 go run ./cmd/inktrail --max-lines-per-hunk 40 --max-context-lines 60 --max-records 500 --budget-tokens 12000
 ```
+
+## Agent workflows
+
+Prefer explicit output files in automated workflows so later steps can retry parsing without rerunning Git analysis:
+
+```sh
+go run ./cmd/inktrail --fallback-to-head --review-summary --output inktrail.jsonl
+```
+
+Use JSON output when a single persisted object is easier for your runner to pass between steps:
+
+```sh
+go run ./cmd/inktrail --fallback-to-head --review-summary --format json --output inktrail.json
+```
+
+For resilient automation over mixed-language changes, combine `--best-effort` with `--review-summary` and check warning records before relying on symbol-level details:
+
+```sh
+go run ./cmd/inktrail --fallback-to-head --best-effort --review-summary --output inktrail.jsonl
+```
+
+Recommended parsing flow:
+
+1. Read the first `summary` record for counts and omissions.
+2. If `--review-summary` was used, read `review_summary` to decide whether the change needs deeper inspection.
+3. Inspect `file` records for changed production files, changed test files, classifications, diffstat, hunks, and lazy `content_ref` paths.
+4. Inspect `changed_symbol` records and matching `declaration_context` records for changed declaration source.
+5. Inspect related `declaration_context` records for direct callers, direct callees, and enclosing declarations.
+6. Inspect `removed_call` and `deleted_symbol` records last; these usually require the most reviewer judgment.
+
+Unknown record types are safe to ignore. Prefer the typed record stream over ad-hoc line matching; each JSONL line is a complete JSON object with a `type` field.
 
 ## Path filtering
 
@@ -59,11 +91,11 @@ Use size controls when an agent needs a bounded prompt input:
 - `--max-records N` keeps the summary and highest-priority detail records, then reports omitted detail counts in summary `omissions`.
 - `--budget-tokens N` applies an approximate planning budget using `ceil(serialized_character_count / 4)` over the JSONL or JSON report. This is model-agnostic guidance, not exact tokenizer output.
 
-When records must be omitted, Inktrail preserves the summary first, then higher-priority detail records before lower-priority graph-detail records. Priority order is: file records, changed symbols, deleted symbols, declaration contexts, moved symbols, removed calls, entry points, then graph nodes. File records retain their symbol lists even when graph nodes are trimmed. Very large context omission lists may be grouped by path/relationship; under token-budget pressure, verbose omission metadata may be further aggregated by omission kind/reason so the summary remains compact and machine-readable. If the summary alone exceeds `--budget-tokens`, Inktrail emits best-effort output with `budget_floor_exceeded` omission metadata.
+When records must be omitted, Inktrail preserves the summary first, then the optional `review_summary`, then higher-priority detail records before lower-priority graph-detail records. Priority order is: file records, changed symbols, deleted symbols, declaration contexts, moved symbols, removed calls, entry points, then graph nodes. File records retain their symbol lists even when graph nodes are trimmed. The `review_summary` is not counted as a detail record by `--max-records`, so agents can still see the full first-pass file/symbol/removal map before deciding whether trimmed detail records are sufficient. Very large context omission lists may be grouped by path/relationship; under token-budget pressure, verbose omission metadata may be further aggregated by omission kind/reason so the summary remains compact and machine-readable. If the summary plus optional `review_summary` exceeds `--budget-tokens`, Inktrail emits best-effort output with `budget_floor_exceeded` omission metadata.
 
 ## Output format
 
-Output is JSONL: one compact JSON object per line. The first record is always `summary`, followed by zero or more detail records.
+Output is JSONL: one compact JSON object per line. The first record is always `summary`, followed by zero or more detail records. When `--review-summary` is set, `review_summary` is emitted immediately after `summary` in JSONL output. In `--format json`, it appears as the top-level `review_summary` object.
 
 Strict analysis is the default: unsupported production languages, parse errors, and graph build errors fail the invocation. Use `--best-effort` when partial output is acceptable; Inktrail then emits available report records plus machine-readable `warning` records.
 
@@ -75,6 +107,7 @@ Declaration context and warning records are additive to the existing stream: con
   - `context_records.total`: total emitted context records.
   - `context_records.declaration_context`: changed-declaration context records.
   - `context_records.related_declaration_context`: unchanged declarations directly related to changed declarations.
+- `review_summary`: optional compact agent-targeted record emitted by `--review-summary`. It groups changed production files, changed test files, changed symbols, deleted symbols, risky removed call edges, and unsupported files when present.
 - `warning`: best-effort analysis warning with stable `code`, human-readable `message`, and optional `path` or `symbol` context. Current codes include `unsupported_language`, `parse_error`, and `graph_build_failed`.
 - `file`: changed file metadata and changed hunks.
   - `status`: `added`, `modified`, `deleted`, or `renamed`.
@@ -112,7 +145,8 @@ Declaration context and warning records are additive to the existing stream: con
 The summary's `context_records` object is always present. Agents can inspect `context_records.total` on the first JSONL line to decide whether declaration context exists before scanning detail records. `declaration_context` counts changed-declaration context records; `related_declaration_context` counts related caller/callee declaration context records.
 
 ```jsonl
-{"type":"summary","files":2,"test_files":1,"changed_symbols":1,"deleted_symbols":1,"moved_symbols":1,"removed_calls":1,"entry_points":1,"nodes":1,"context_records":{"total":2,"declaration_context":1,"related_declaration_context":1}}
+{"type":"summary","schema_version":"1.0","files":2,"test_files":1,"changed_symbols":1,"deleted_symbols":1,"moved_symbols":1,"removed_calls":1,"entry_points":1,"nodes":1,"context_records":{"total":2,"declaration_context":1,"related_declaration_context":1}}
+{"type":"review_summary","schema_version":"1.0","changed_production_files":[{"path":"service/b.go","status":"modified","language":"go","symbols":["service/b.go::service.ServiceB.Do"]}],"changed_test_files":[{"path":"service/b_test.go","status":"modified","language":"go"}],"changed_symbols":["service/b.go::service.ServiceB.Do"],"deleted_symbols":["repository/old.go::repository.RepositoryOld.Get"],"risky_removed_call_edges":[{"from":"service/b.go::service.ServiceB.Do","to":"repository/old.go::repository.RepositoryOld.Get","call_site":{"path":"service/b.go","line":18}}]}
 {"type":"file","status":"modified","path":"service/b.go","test":false,"language":"go","classification":["source"],"diffstat":{"added_lines":1,"deleted_lines":1,"added_bytes":28,"deleted_bytes":25},"symbols":["service/b.go::service.ServiceB.Do"],"content_ref":{"kind":"workspace_file","path":"service/b.go"},"hunks":[{"old_start":18,"old_lines":1,"new_start":18,"new_lines":1,"lines":[{"op":"delete","old_line":18,"content":"old.RepositoryOld{}.Get()"},{"op":"add","new_line":18,"content":"repository.RepositoryB{}.Get()"}]}]}
 {"type":"changed_symbol","id":"service/b.go::service.ServiceB.Do"}
 {"type":"deleted_symbol","id":"repository/old.go::repository.RepositoryOld.Get"}

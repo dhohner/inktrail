@@ -383,7 +383,7 @@ func TestRunPathFilteringFlags(t *testing.T) {
 
 	var out bytes.Buffer
 	var errOut bytes.Buffer
-	if err := run([]string{"--include", "**/*.go", "--exclude", "**/*_test.go", "--exclude-vendor", "--changed-only", "--format", "json"}, &out, &errOut); err != nil {
+	if err := run([]string{"--include", "**/*.go", "--exclude", "**/*_test.go", "--exclude-vendor", "--changed-only", "--review-summary", "--format", "json"}, &out, &errOut); err != nil {
 		t.Fatal(err)
 	}
 	var got struct {
@@ -393,12 +393,49 @@ func TestRunPathFilteringFlags(t *testing.T) {
 		Files []struct {
 			Path string `json:"path"`
 		} `json:"files"`
+		ReviewSummary *struct {
+			ChangedProductionFiles []struct {
+				Path string `json:"path"`
+			} `json:"changed_production_files"`
+		} `json:"review_summary"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("invalid json output %q: %v", out.String(), err)
 	}
-	if got.Summary.Files != 1 || len(got.Files) != 1 || got.Files[0].Path != "app.go" {
+	if got.Summary.Files != 1 || len(got.Files) != 1 || got.Files[0].Path != "app.go" || got.ReviewSummary == nil || len(got.ReviewSummary.ChangedProductionFiles) != 1 || got.ReviewSummary.ChangedProductionFiles[0].Path != "app.go" {
 		t.Fatalf("unexpected filtered report: %#v", got)
+	}
+}
+
+func TestRunReviewSummaryFlagEmitsJSONLObject(t *testing.T) {
+	withAnalysisDeps(t, func(opts diff.Options) (diff.Result, error) {
+		return diff.Result{Files: []diff.FileChange{{Status: "modified", Path: "app.go"}, {Status: "modified", Path: "app_test.go", Test: true}}}, nil
+	}, func(string) (*graph.Graph, error) {
+		return &graph.Graph{}, nil
+	}, func(string) (*graph.Graph, error) {
+		return &graph.Graph{}, nil
+	})
+
+	var out bytes.Buffer
+	var errOut bytes.Buffer
+	if err := run([]string{"--review-summary", "--format", "json"}, &out, &errOut); err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		ReviewSummary *struct {
+			ChangedProductionFiles []struct {
+				Path string `json:"path"`
+			} `json:"changed_production_files"`
+			ChangedTestFiles []struct {
+				Path string `json:"path"`
+			} `json:"changed_test_files"`
+		} `json:"review_summary"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("invalid json output %q: %v", out.String(), err)
+	}
+	if got.ReviewSummary == nil || len(got.ReviewSummary.ChangedProductionFiles) != 1 || got.ReviewSummary.ChangedProductionFiles[0].Path != "app.go" || len(got.ReviewSummary.ChangedTestFiles) != 1 || got.ReviewSummary.ChangedTestFiles[0].Path != "app_test.go" {
+		t.Fatalf("unexpected review summary: %#v", got.ReviewSummary)
 	}
 }
 

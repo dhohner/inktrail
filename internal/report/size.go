@@ -12,10 +12,11 @@ import (
 
 // SizeOptions bounds emitted report detail while preserving summary metadata.
 type SizeOptions struct {
-	MaxLinesPerHunk int
-	MaxContextLines int
-	MaxRecords      int
-	BudgetTokens    int
+	MaxLinesPerHunk   int
+	MaxContextLines   int
+	MaxRecords        int
+	BudgetTokens      int
+	EmitReviewSummary bool
 }
 
 func (o SizeOptions) Validate() error {
@@ -26,6 +27,10 @@ func (o SizeOptions) Validate() error {
 }
 
 func prepareForWrite(r Report, opts SizeOptions, format string) Report {
+	return prepareForWriteWithReviewSource(r, opts, format, reviewSummarySource(r))
+}
+
+func prepareForWriteWithReviewSource(r Report, opts SizeOptions, format string, reviewSource Report) Report {
 	r = cloneReportForSizing(withSchemaVersion(r))
 	if r.FileSymbols == nil {
 		r.FileSymbols = symbolsByPath(r.Nodes)
@@ -41,7 +46,7 @@ func prepareForWrite(r Report, opts SizeOptions, format string) Report {
 		}
 	}
 	if opts.BudgetTokens > 0 {
-		r = fitTokenBudget(r, opts, format)
+		r = fitTokenBudgetWithReviewSource(r, opts, format, reviewSource)
 	}
 	return r
 }
@@ -302,33 +307,41 @@ func trimToRecordCount(r Report, max int) Report {
 }
 
 func fitTokenBudget(r Report, opts SizeOptions, format string) Report {
-	if estimateReportTokens(r, opts, format) <= opts.BudgetTokens {
+	return fitTokenBudgetWithReviewSource(r, opts, format, reviewSummarySource(r))
+}
+
+func fitTokenBudgetWithReviewSource(r Report, opts SizeOptions, format string, reviewSource Report) Report {
+	if estimateReportTokensWithReviewSource(r, opts, format, reviewSource) <= opts.BudgetTokens {
 		return r
 	}
 	r.Summary.Omissions = compactOmissionsForBudget(r.Summary.Omissions)
 	before := detailRecordCount(r)
 	if before > 0 {
 		base := r
-		best, ok := reportForLargestFittingRecordCount(base, before, opts, format)
+		best, ok := reportForLargestFittingRecordCountWithReviewSource(base, before, opts, format, reviewSource)
 		if ok {
 			return best
 		}
 		r = withBudgetRecordOmission(trimToRecordCount(base, 0), before, 0)
 	}
-	if estimateReportTokens(r, opts, format) > opts.BudgetTokens {
-		r = withBudgetFloorOmission(r, opts, format)
+	if estimateReportTokensWithReviewSource(r, opts, format, reviewSource) > opts.BudgetTokens {
+		r = withBudgetFloorOmissionWithReviewSource(r, opts, format, reviewSource)
 	}
 	return r
 }
 
 func reportForLargestFittingRecordCount(base Report, originalRecords int, opts SizeOptions, format string) (Report, bool) {
+	return reportForLargestFittingRecordCountWithReviewSource(base, originalRecords, opts, format, reviewSummarySource(base))
+}
+
+func reportForLargestFittingRecordCountWithReviewSource(base Report, originalRecords int, opts SizeOptions, format string, reviewSource Report) (Report, bool) {
 	low, high := 0, originalRecords
 	var best Report
 	ok := false
 	for low <= high {
 		mid := low + (high-low)/2
 		candidate := withBudgetRecordOmission(trimToRecordCount(base, mid), originalRecords, mid)
-		if estimateReportTokens(candidate, opts, format) <= opts.BudgetTokens {
+		if estimateReportTokensWithReviewSource(candidate, opts, format, reviewSource) <= opts.BudgetTokens {
 			best = candidate
 			ok = true
 			low = mid + 1
@@ -345,12 +358,16 @@ func withBudgetRecordOmission(r Report, originalRecords, emittedRecords int) Rep
 }
 
 func withBudgetFloorOmission(r Report, opts SizeOptions, format string) Report {
+	return withBudgetFloorOmissionWithReviewSource(r, opts, format, reviewSummarySource(r))
+}
+
+func withBudgetFloorOmissionWithReviewSource(r Report, opts SizeOptions, format string, reviewSource Report) Report {
 	for {
-		estimate := estimateReportTokens(r, opts, format)
+		estimate := estimateReportTokensWithReviewSource(r, opts, format, reviewSource)
 		next := r
 		next.Summary.Omissions = upsertOmission(cloneOmissions(next.Summary.Omissions), Omission{Kind: "budget", Reason: "budget_floor_exceeded", OriginalCount: estimate, EmittedCount: opts.BudgetTokens, OmittedCount: estimate - opts.BudgetTokens})
 		next.Summary.Omissions = compactOmissionsForBudget(next.Summary.Omissions)
-		if estimateReportTokens(next, opts, format) == estimateReportTokens(r, opts, format) {
+		if estimateReportTokensWithReviewSource(next, opts, format, reviewSource) == estimateReportTokensWithReviewSource(r, opts, format, reviewSource) {
 			return next
 		}
 		r = next
@@ -416,12 +433,16 @@ func jsonSize(v any) int {
 }
 
 func estimateReportTokens(r Report, opts SizeOptions, format string) int {
+	return estimateReportTokensWithReviewSource(r, opts, format, reviewSummarySource(r))
+}
+
+func estimateReportTokensWithReviewSource(r Report, opts SizeOptions, format string, reviewSource Report) int {
 	var buf bytes.Buffer
 	opts.BudgetTokens = 0
 	if format == "json" {
-		_ = writeJSONWithOptions(&buf, r, opts)
+		_ = writeJSONPrepared(&buf, r, opts, reviewSource)
 	} else {
-		_ = writeJSONLWithOptions(&buf, r, opts)
+		_ = writeJSONLPrepared(&buf, r, opts, reviewSource)
 	}
 	return int(math.Ceil(float64(buf.Len()) / 4.0))
 }

@@ -51,7 +51,7 @@ func run(args []string, out, errOut io.Writer) error {
 	flags.Usage = func() {
 		fmt.Fprintln(flags.Output(), "Usage of inktrail:")
 		fmt.Fprintln(flags.Output(), "  inktrail --version [--json]")
-		fmt.Fprintln(flags.Output(), "  inktrail [--fallback-to-head] [--best-effort] [--format jsonl|json] [--output <path>]")
+		fmt.Fprintln(flags.Output(), "  inktrail [--fallback-to-head] [--best-effort] [--review-summary] [--format jsonl|json] [--output <path>]")
 		fmt.Fprintln(flags.Output(), "  inktrail [--include <glob>] [--exclude <glob>] [--exclude-vendor] [--changed-only]")
 		fmt.Fprintln(flags.Output(), "  inktrail [--max-lines-per-hunk N] [--max-context-lines N] [--max-records N] [--budget-tokens N]")
 		fmt.Fprintln(flags.Output(), "  inktrail <commit>")
@@ -62,11 +62,13 @@ func run(args []string, out, errOut io.Writer) error {
 		fmt.Fprintln(flags.Output(), "  inktrail --include 'internal/**/*.go'")
 		fmt.Fprintln(flags.Output(), "  inktrail --exclude '**/*_test.go' --exclude-vendor")
 		fmt.Fprintln(flags.Output(), "  inktrail --changed-only")
+		fmt.Fprintln(flags.Output(), "  inktrail --fallback-to-head --review-summary --output inktrail.jsonl")
 		fmt.Fprintln(flags.Output())
 		flags.PrintDefaults()
 	}
 	fallbackToHead := flags.Bool("fallback-to-head", false, "analyze HEAD when no commits are provided, the worktree is clean, and nothing is staged")
 	bestEffort := flags.Bool("best-effort", false, "emit partial report records with structured warning records instead of failing on analysis gaps")
+	reviewSummary := flags.Bool("review-summary", false, "emit a compact agent-targeted review summary record")
 	reportFormat := flags.String("format", "jsonl", "report format: jsonl or json")
 	outputPath := flags.String("output", "", "write report to path instead of stdout")
 	showVersion := flags.Bool("version", false, "print version metadata and exit")
@@ -111,7 +113,7 @@ func run(args []string, out, errOut io.Writer) error {
 	if err := filters.Validate(); err != nil {
 		return err
 	}
-	size := report.SizeOptions{MaxLinesPerHunk: *maxLinesPerHunk, MaxContextLines: *maxContextLines, MaxRecords: *maxRecords, BudgetTokens: *budgetTokens}
+	size := report.SizeOptions{MaxLinesPerHunk: *maxLinesPerHunk, MaxContextLines: *maxContextLines, MaxRecords: *maxRecords, BudgetTokens: *budgetTokens, EmitReviewSummary: *reviewSummary}
 	if err := size.Validate(); err != nil {
 		return err
 	}

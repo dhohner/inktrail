@@ -141,6 +141,24 @@ type Summary struct {
 	Omissions      []Omission          `json:"omissions,omitempty"`
 }
 
+type ReviewFile struct {
+	Path     string   `json:"path"`
+	OldPath  string   `json:"old_path,omitempty"`
+	Status   string   `json:"status"`
+	Language string   `json:"language,omitempty"`
+	Symbols  []string `json:"symbols,omitempty"`
+}
+
+type ReviewSummary struct {
+	SchemaVersion          string        `json:"schema_version"`
+	ChangedProductionFiles []ReviewFile  `json:"changed_production_files,omitempty"`
+	ChangedTestFiles       []ReviewFile  `json:"changed_test_files,omitempty"`
+	ChangedSymbols         []string      `json:"changed_symbols,omitempty"`
+	DeletedSymbols         []string      `json:"deleted_symbols,omitempty"`
+	RiskyRemovedCallEdges  []RemovedCall `json:"risky_removed_call_edges,omitempty"`
+	UnsupportedFiles       []string      `json:"unsupported_files,omitempty"`
+}
+
 type Report struct {
 	Summary        Summary              `json:"summary"`
 	Warnings       []Warning            `json:"warnings,omitempty"`

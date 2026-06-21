@@ -32,6 +32,61 @@ func TestWriteJSONLWritesOneRecordPerLine(t *testing.T) {
 	}
 }
 
+func TestWriteJSONLEmitsReviewSummaryRecord(t *testing.T) {
+	r := Report{
+		Summary:        Summary{Files: 2, ChangedSymbols: 1, DeletedSymbols: 1, RemovedCalls: 1},
+		Warnings:       []Warning{{Code: "unsupported_language", Path: "web/app.ts", Message: "unsupported production language skipped for symbol and call graph analysis"}},
+		Files:          []diff.FileChange{{Status: "modified", Path: "app.go"}, {Status: "modified", Path: "app_test.go", Test: true}, {Status: "modified", Path: "web/app.ts"}},
+		ChangedSymbols: []string{"app.go::app.F"},
+		DeletedSymbols: []string{"old.go::app.Old"},
+		RemovedCalls:   []RemovedCall{{From: "app.go::app.F", To: "old.go::app.Old", CallSite: CallSite{Path: "app.go", Line: 12}}},
+		FileSymbols:    map[string][]string{"app.go": {"app.go::app.F"}},
+	}
+	var buf bytes.Buffer
+
+	if err := WriteJSONLWithOptions(&buf, r, SizeOptions{EmitReviewSummary: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	records := jsonlRecords(t, buf.Bytes())
+	if len(records) < 2 || records[0]["type"] != "summary" || records[1]["type"] != "review_summary" {
+		t.Fatalf("records=%#v", records)
+	}
+	review := records[1]
+	if len(review["changed_production_files"].([]any)) != 2 || len(review["changed_test_files"].([]any)) != 1 || len(review["changed_symbols"].([]any)) != 1 || len(review["deleted_symbols"].([]any)) != 1 || len(review["risky_removed_call_edges"].([]any)) != 1 || review["unsupported_files"].([]any)[0] != "web/app.ts" {
+		t.Fatalf("review summary=%#v", review)
+	}
+}
+
+func TestWriteJSONLReviewSummarySurvivesMaxRecordsTrimming(t *testing.T) {
+	r := Report{
+		Summary:        Summary{Files: 2, ChangedSymbols: 2, Nodes: 2},
+		Files:          []diff.FileChange{{Status: "modified", Path: "app.go"}, {Status: "modified", Path: "service.go"}},
+		ChangedSymbols: []string{"app.go::app.F", "service.go::app.G"},
+		Nodes:          []Node{{ID: "app.go::app.F", Path: "app.go"}, {ID: "service.go::app.G", Path: "service.go"}},
+	}
+	var buf bytes.Buffer
+
+	if err := WriteJSONLWithOptions(&buf, r, SizeOptions{EmitReviewSummary: true, MaxRecords: 1}); err != nil {
+		t.Fatal(err)
+	}
+
+	records := jsonlRecords(t, buf.Bytes())
+	if len(records) != 3 || records[0]["type"] != "summary" || records[1]["type"] != "review_summary" || records[2]["type"] != "file" {
+		t.Fatalf("unexpected records after trimming: %#v", records)
+	}
+	review := records[1]
+	if got := len(review["changed_production_files"].([]any)); got != 2 {
+		t.Fatalf("review summary should keep all changed files under max-records, got %d: %#v", got, review)
+	}
+	if got := len(review["changed_symbols"].([]any)); got != 2 {
+		t.Fatalf("review summary should keep all changed symbols under max-records, got %d: %#v", got, review)
+	}
+	if records[0]["omissions"] == nil {
+		t.Fatalf("summary should still report detail record omissions: %#v", records[0])
+	}
+}
+
 func TestWriteJSONLEmitsWarningRecords(t *testing.T) {
 	r := Report{Warnings: []Warning{{Code: "parse_error", Path: "app.go", Message: "current graph build failed: parse app.go: syntax error"}}}
 	var buf bytes.Buffer

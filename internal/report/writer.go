@@ -10,6 +10,7 @@ import (
 type Object struct {
 	SchemaVersion  string               `json:"schema_version"`
 	Summary        Summary              `json:"summary"`
+	ReviewSummary  *ReviewSummary       `json:"review_summary,omitempty"`
 	Warnings       []Warning            `json:"warnings,omitempty"`
 	Files          []FileRecord         `json:"files"`
 	ChangedSymbols []string             `json:"changed_symbols"`
@@ -26,10 +27,11 @@ func WriteJSONL(w io.Writer, r Report) error {
 }
 
 func WriteJSONLWithOptions(w io.Writer, r Report, opts SizeOptions) error {
-	return writeJSONLWithOptions(w, prepareForWrite(r, opts, "jsonl"), opts)
+	reviewSource := reviewSummarySource(r)
+	return writeJSONLPrepared(w, prepareForWriteWithReviewSource(r, opts, "jsonl", reviewSource), opts, reviewSource)
 }
 
-func writeJSONLWithOptions(w io.Writer, r Report, opts SizeOptions) error {
+func writeJSONLPrepared(w io.Writer, r Report, opts SizeOptions, reviewSource Report) error {
 	r = withSchemaVersion(r)
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
@@ -38,6 +40,14 @@ func writeJSONLWithOptions(w io.Writer, r Report, opts SizeOptions) error {
 		Summary
 	}{Type: "summary", Summary: r.Summary}); err != nil {
 		return err
+	}
+	if opts.EmitReviewSummary {
+		if err := enc.Encode(struct {
+			Type string `json:"type"`
+			ReviewSummary
+		}{Type: "review_summary", ReviewSummary: buildReviewSummary(reviewSource)}); err != nil {
+			return err
+		}
 	}
 	for _, warning := range r.Warnings {
 		if err := enc.Encode(struct {
@@ -117,27 +127,32 @@ func WriteJSON(w io.Writer, r Report) error {
 }
 
 func WriteJSONWithOptions(w io.Writer, r Report, opts SizeOptions) error {
-	return writeJSONWithOptions(w, prepareForWrite(r, opts, "json"), opts)
+	reviewSource := reviewSummarySource(r)
+	return writeJSONPrepared(w, prepareForWriteWithReviewSource(r, opts, "json", reviewSource), opts, reviewSource)
 }
 
-func writeJSONWithOptions(w io.Writer, r Report, opts SizeOptions) error {
+func writeJSONPrepared(w io.Writer, r Report, opts SizeOptions, reviewSource Report) error {
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
-	return enc.Encode(toObjectWithOptions(r, opts))
+	return enc.Encode(toObjectWithReviewSource(r, opts, reviewSource))
 }
 
 func ToObject(r Report) Object {
-	return toObjectWithOptions(r, SizeOptions{})
+	return toObjectWithReviewSource(r, SizeOptions{}, reviewSummarySource(r))
 }
 
 func toObjectWithOptions(r Report, opts SizeOptions) Object {
+	return toObjectWithReviewSource(r, opts, reviewSummarySource(r))
+}
+
+func toObjectWithReviewSource(r Report, opts SizeOptions, reviewSource Report) Object {
 	r = withSchemaVersion(r)
 	fileSymbols := fileSymbolsForReport(r)
 	files := make([]FileRecord, 0, len(r.Files))
 	for _, file := range r.Files {
 		files = append(files, fileRecordWithOptions(file, fileSymbols[file.Path], opts))
 	}
-	return Object{
+	obj := Object{
 		SchemaVersion:  r.Summary.SchemaVersion,
 		Summary:        r.Summary,
 		Warnings:       cloneWarnings(r.Warnings),
@@ -150,6 +165,19 @@ func toObjectWithOptions(r Report, opts SizeOptions) Object {
 		EntryPoints:    cloneStrings(r.EntryPoints),
 		Nodes:          cloneNodes(r.Nodes),
 	}
+	if opts.EmitReviewSummary {
+		reviewSummary := buildReviewSummary(reviewSource)
+		obj.ReviewSummary = &reviewSummary
+	}
+	return obj
+}
+
+func reviewSummarySource(r Report) Report {
+	r = withSchemaVersion(r)
+	if r.FileSymbols == nil {
+		r.FileSymbols = symbolsByPath(r.Nodes)
+	}
+	return r
 }
 
 func fileSymbolsForReport(r Report) map[string][]string {
